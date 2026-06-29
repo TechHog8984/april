@@ -40,6 +40,30 @@ int outputClass(Class& _class, std::string& output) {
     indent(output);
     output.append("hasloaded = false,\n");
     indent(output);
+    output.append("isinterface = ")
+        .append(_class.access_flags & CLASS_ACC_INTERFACE ? "true,\n" : "false,\n");
+    indent(output);
+    output.append("issuper = ")
+        .append(_class.access_flags & CLASS_ACC_SUPER ? "true,\n" : "false,\n");
+    if (_class.super_class) {
+        indent(output);
+        output.append("superclass = \"");
+        output.insert(output.end(), _class.super_class->Class.name->Utf8.bytes, _class.super_class->Class.name->Utf8.bytes + _class.super_class->Class.name->Utf8.bytes_size);
+        output.append("\",\n");
+    }
+    indent(output);
+    output.append("interfaces = {\n");
+    addIndent();
+    for (uint16_t i = 0; i < _class.interface_count; i++) {
+        indent(output);
+        output.push_back('"');
+        output.insert(output.end(), _class.interface_list[i]->Class.name->Utf8.bytes, _class.interface_list[i]->Class.name->Utf8.bytes + _class.interface_list[i]->Class.name->Utf8.bytes_size);
+        output.append("\",\n");
+    }
+    subIndent();
+    indent(output);
+    output.append("},\n");
+    indent(output);
     output.append("fieldcache = {},\n");
     indent(output);
     output.append("methodcache = {},\n");
@@ -269,6 +293,20 @@ int outputClass(Class& _class, std::string& output) {
                     indent(output);
                     output.append("push(local_array[1])\n");
                     SETPC
+                OPCONDITIONAL(0x2b) // aload_1
+                    indent(output);
+                    output.append("push(local_array[2])\n");
+                    SETPC
+                OPCONDITIONAL(0x4c) // astore_1
+                    // TODO: check returnAddress or reference type
+                    indent(output);
+                    output.append("local_array[2] = pop()\n");
+                    SETPC
+                OPCONDITIONAL(0x59) // dup
+                    // TODO: check category 1
+                    indent(output);
+                    output.append("push(stack[#stack])\n");
+                    SETPC
                 OPCONDITIONAL(0xb1) // return
                     indent(output);
                     output.append("return\n");
@@ -331,6 +369,69 @@ int outputClass(Class& _class, std::string& output) {
                     output.append("local object = class.staticinstance\n");
                     indent(output);
                     output.append("local value = pop()\n");
+                    indent(output);
+                    output.append("object[field] = value\n");
+
+                    SETPC
+                OPCONDITIONAL(0xb4) // getfield
+                    GETAUXCONSTINDEX(index);
+
+                    if (index < 1 || index > _class.constant_pool_count) {
+                        std::cerr << "[ERROR]: instruction #" << old_pc << "'s index was out of bounds" << std::endl;
+                        return 1;
+                    }
+                    Constant& constant = _class.constant_pool[index - 1];
+                    if (constant.tag != ConstantType::Fieldref) {
+                        std::cerr << "[ERROR]: expected Fieldref for getfield instruction #" << old_pc << "'s tag but got " << constant_type_names.at(constant.tag) << std::endl;
+                        return 1;
+                    }
+
+                    indent(output);
+                    output.append("local field = classloader.lookupField(\"");
+                    output.insert(output.end(), constant.GeneralRef._class->Class.name->Utf8.bytes, constant.GeneralRef._class->Class.name->Utf8.bytes + constant.GeneralRef._class->Class.name->Utf8.bytes_size);
+
+                    output.append("\", \"");
+                    output.insert(output.end(), constant.GeneralRef.name_and_type->NameAndType.name->Utf8.bytes, constant.GeneralRef.name_and_type->NameAndType.name->Utf8.bytes + constant.GeneralRef.name_and_type->NameAndType.name->Utf8.bytes_size);
+                    output.append("\", \"");
+                    output.insert(output.end(), constant.GeneralRef.name_and_type->NameAndType.descriptor->Utf8.bytes, constant.GeneralRef.name_and_type->NameAndType.descriptor->Utf8.bytes + constant.GeneralRef.name_and_type->NameAndType.descriptor->Utf8.bytes_size);
+                    output.append("\", true)\n");
+
+                    // TODO: check protected
+                    // TODO: check array type
+
+                    indent(output);
+                    output.append("local object = pop()\n");
+                    indent(output);
+                    output.append("push(object[field])\n");
+
+                    SETPC
+                OPCONDITIONAL(0xb5) // putfield
+                    GETAUXCONSTINDEX(index);
+
+                    if (index < 1 || index > _class.constant_pool_count) {
+                        std::cerr << "[ERROR]: instruction #" << old_pc << "'s index was out of bounds" << std::endl;
+                        return 1;
+                    }
+                    Constant& constant = _class.constant_pool[index - 1];
+                    if (constant.tag != ConstantType::Fieldref) {
+                        std::cerr << "[ERROR]: expected Fieldref for putfield instruction #" << old_pc << "'s tag but got " << constant_type_names.at(constant.tag) << std::endl;
+                        return 1;
+                    }
+
+                    indent(output);
+                    output.append("local field = classloader.lookupField(\"");
+                    output.insert(output.end(), constant.GeneralRef._class->Class.name->Utf8.bytes, constant.GeneralRef._class->Class.name->Utf8.bytes + constant.GeneralRef._class->Class.name->Utf8.bytes_size);
+
+                    output.append("\", \"");
+                    output.insert(output.end(), constant.GeneralRef.name_and_type->NameAndType.name->Utf8.bytes, constant.GeneralRef.name_and_type->NameAndType.name->Utf8.bytes + constant.GeneralRef.name_and_type->NameAndType.name->Utf8.bytes_size);
+                    output.append("\", \"");
+                    output.insert(output.end(), constant.GeneralRef.name_and_type->NameAndType.descriptor->Utf8.bytes, constant.GeneralRef.name_and_type->NameAndType.descriptor->Utf8.bytes + constant.GeneralRef.name_and_type->NameAndType.descriptor->Utf8.bytes_size);
+                    output.append("\", true)\n");
+
+                    indent(output);
+                    output.append("local value = pop()\n");
+                    indent(output);
+                    output.append("local object = pop()\n");
                     indent(output);
                     output.append("object[field] = value\n");
 
@@ -445,11 +546,75 @@ int outputClass(Class& _class, std::string& output) {
                     }
 
                     indent(output);
-                    output.append("-- invokespecial on ");
+                    output.append("local methodtype = \"");
+                    output.insert(output.end(), constant.GeneralRef.name_and_type->NameAndType.descriptor->Utf8.bytes, constant.GeneralRef.name_and_type->NameAndType.descriptor->Utf8.bytes + constant.GeneralRef.name_and_type->NameAndType.descriptor->Utf8.bytes_size);
+                    output.append("\"\n");
+
+                    indent(output);
+                    output.append("local descriptor = descriptor_parser.parseMethodDescriptor(methodtype)\n");
+                    indent(output);
+                    output.append("local parameter_count = descriptor.parameter_count\n");
+
+                    indent(output);
+                    output.append("local method = classloader.lookupMethodSpecial(\"")
+                        .append(class_name)
+                        .append("\", \"");
                     output.insert(output.end(), constant.GeneralRef._class->Class.name->Utf8.bytes, constant.GeneralRef._class->Class.name->Utf8.bytes + constant.GeneralRef._class->Class.name->Utf8.bytes_size);
-                    output.append("'s '");
+                    output.append("\", \"");
                     output.insert(output.end(), constant.GeneralRef.name_and_type->NameAndType.name->Utf8.bytes, constant.GeneralRef.name_and_type->NameAndType.name->Utf8.bytes + constant.GeneralRef.name_and_type->NameAndType.name->Utf8.bytes_size);
-                    output.append("' method\n");
+                    output.append("\", methodtype, true)\n");
+
+indent(output);
+                    output.append("local object = stack[#stack - parameter_count]\n");
+
+                    // TODO: check if object is a valid instance?
+
+                    indent(output);
+                    output.append("for i = parameter_count, 1, -1 do\n");
+                    addIndent();
+
+                    indent(output);
+                    output.append("argarrayscratch[i] = pop()\n");
+
+                    subIndent();
+                    indent(output);
+                    output.append("end\n");
+
+                    indent(output);
+                    output.append("local results = table.pack(method(object, table.unpack(argarrayscratch, 1, parameter_count)))\n");
+
+                    indent(output);
+                    output.append("table.clear(argarrayscratch)\n");
+
+                    indent(output);
+                    output.append("for i = 1, results.n do\n");
+                    addIndent();
+
+                    indent(output);
+                    output.append("push(results[i])\n");
+
+                    subIndent();
+                    indent(output);
+                    output.append("end\n");
+
+                    SETPC
+                OPCONDITIONAL(0xbb) // new
+                    GETAUXCONSTINDEX(index)
+
+                    if (index < 1 || index > _class.constant_pool_count) {
+                        std::cerr << "[ERROR]: instruction #" << old_pc << "'s index was out of bounds" << std::endl;
+                        return 1;
+                    }
+                    Constant& constant = _class.constant_pool[index - 1];
+                    if (constant.tag != ConstantType::Class) {
+                        std::cerr << "[ERROR]: expected Class for new instruction #" << old_pc << "'s tag but got " << constant_type_names.at(constant.tag) << std::endl;
+                        return 1;
+                    }
+
+                    indent(output);
+                    output.append("push(classloader.newObjectFromClassName(\"");
+                    output.insert(output.end(), constant.Class.name->Utf8.bytes, constant.Class.name->Utf8.bytes + constant.Class.name->Utf8.bytes_size);
+                    output.append("\"))\n");
 
                     SETPC
 

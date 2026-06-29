@@ -453,17 +453,6 @@ int readClassFile(std::ifstream& classfile, Class &_class) {
     _class.access_flags = readu2(classfile);
     std::cout << "access flags: " << _class.access_flags << " (";
 
-    enum ClassAccessFlags: int16_t {
-        CLASS_ACC_PUBLIC = 0x0001,
-        CLASS_ACC_FINAL = 0x0010,
-        CLASS_ACC_SUPER = 0x0020,
-        CLASS_ACC_INTERFACE = 0x0200,
-        CLASS_ACC_ABSTRACT = 0x0400,
-        CLASS_ACC_SYNTHETIC = 0x1000,
-        CLASS_ACC_ANNOTATION = 0x2000,
-        CLASS_ACC_ENUM = 0x4000,
-    };
-
     if (_class.access_flags & CLASS_ACC_PUBLIC)
         std::cout << "PUBLIC, ";
     if (_class.access_flags & CLASS_ACC_FINAL)
@@ -536,19 +525,19 @@ int readClassFile(std::ifstream& classfile, Class &_class) {
     _class.interface_count = readu2(classfile);
     std::cout << "interface count: " << _class.interface_count << std::endl;
 
-    _class.interface_list = new uint16_t[_class.interface_count];
-    std::memset(_class.interface_list, 0, sizeof(uint16_t) * _class.interface_count);
+    _class.interface_list = new Constant*[_class.interface_count];
+    std::memset(_class.interface_list, 0, sizeof(Constant*) * _class.interface_count);
 
     for (uint16_t i = 0; i < _class.interface_count; i++) {
         uint16_t index = readu2(classfile);
 
-        Constant& constant = _class.constant_pool[index - 1];
-        if (constant.tag != ConstantType::Class) {
-            std::cerr << "[ERROR]: expected Class for interface constant tag but got " << constant_type_names.at(constant.tag) << std::endl;
+        Constant* constant = &_class.constant_pool[index - 1];
+        if (constant->tag != ConstantType::Class) {
+            std::cerr << "[ERROR]: expected Class for interface constant tag but got " << constant_type_names.at(constant->tag) << std::endl;
             return 1;
         }
 
-        _class.interface_list[i] = index;
+        _class.interface_list[i] = constant;
     }
 
     _class.field_count = readu2(classfile);

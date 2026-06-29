@@ -187,6 +187,17 @@ enum StringAtom: uint8_t {
     Atom_kInstanceInitialization
 };
 
+enum ClassAccessFlags: int16_t {
+    CLASS_ACC_PUBLIC = 0x0001,
+    CLASS_ACC_FINAL = 0x0010,
+    CLASS_ACC_SUPER = 0x0020,
+    CLASS_ACC_INTERFACE = 0x0200,
+    CLASS_ACC_ABSTRACT = 0x0400,
+    CLASS_ACC_SYNTHETIC = 0x1000,
+    CLASS_ACC_ANNOTATION = 0x2000,
+    CLASS_ACC_ENUM = 0x4000,
+};
+
 struct Class {
     uint16_t major_version;
     uint16_t minor_version;
@@ -200,7 +211,7 @@ struct Class {
     Constant* super_class;
 
     uint16_t interface_count;
-    uint16_t* interface_list;
+    Constant** interface_list;
 
     uint16_t field_count;
     Field* field_list;
