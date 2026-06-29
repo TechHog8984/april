@@ -78,8 +78,6 @@ int main(int argc, char** argv) {
     ret = readClassFile(input_file, _class);
     if (ret) goto RETURN;
 
-    output.reserve(input_file.tellg() / 2); // rough estimate
-
     ret = generateLuau(_class, output);
     if (ret) goto RETURN;
 
