@@ -5,7 +5,7 @@ april is a Java bytecode to Lua source code conversion tool.
 # NOTES
 1. april is WORK IN PROGRESS and UNSTABLE!
 2. april targets Java 8
-3. april targets [Luau](https://github.com/luau-lang/luau)
+3. april outputs [Luau](https://github.com/luau-lang/luau) with plans for supporting other dialects unknown 
 
 # BUILDING
 ```bash
