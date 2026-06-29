@@ -41,8 +41,9 @@ class a {
 }
 ```
 ```bash
-./build/april ./io/bin/tech/hog/a.class -o=io/out.luau
-lune run runner.luau ./out.luau
+cd io
+../build/april ./bin/tech/hog/a.class -o=./out/a.luau
+lune run runner.luau tech/hog/a
 ```
 ```
 Hello, world!
