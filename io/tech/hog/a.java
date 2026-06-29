@@ -1,0 +1,17 @@
+package tech.hog;
+
+class a {
+  private static int numfield = 1;
+  private static int numfield2 = 1410421;
+  private static double numfield3 = 0.05;
+  private static float numfield4 = -14.0036f;
+  private static long numfield5 = 5213798342598754414L;
+  public static void main(String[] args) {
+    System.out.println("Hello, world!");
+    System.out.println(numfield);
+    System.out.println(numfield2);
+    System.out.println(numfield3);
+    System.out.println(numfield4);
+    System.out.println(numfield5);
+  }
+}
