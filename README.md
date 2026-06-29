@@ -22,7 +22,7 @@ cmake -B build -S . && cmake --build build
 ## ACTUALLY DOING SOMETHING
 An output of april will not do anything on its own. For now, you can use the TEMPORARY [runner script](./io/runner.luau).
 
-The runner script has a stub for System.out.println (yes that's it...) so basic programs like the following can run:
+The runner script has a stub for System.out.println so basic programs like the following can run:
 ```java
 package tech.hog;
 
