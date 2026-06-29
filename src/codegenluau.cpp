@@ -39,12 +39,14 @@ int outputClass(Class& _class, std::string& output) {
         .append("\",\n");
     indent(output);
     output.append("hasloaded = false,\n");
-    indent(output);
-    output.append("isinterface = ")
-        .append(_class.access_flags & CLASS_ACC_INTERFACE ? "true,\n" : "false,\n");
+
     indent(output);
     output.append("issuper = ")
         .append(_class.access_flags & CLASS_ACC_SUPER ? "true,\n" : "false,\n");
+    indent(output);
+    output.append("isinterface = ")
+        .append(_class.access_flags & CLASS_ACC_INTERFACE ? "true,\n" : "false,\n");
+
     if (_class.super_class) {
         indent(output);
         output.append("superclass = \"");
@@ -106,10 +108,20 @@ int outputClass(Class& _class, std::string& output) {
         output.push_back('-');
         output.insert(output.end(), method.descriptor->Utf8.bytes, method.descriptor->Utf8.bytes + method.descriptor->Utf8.bytes_size);
 
-        output.append("\"] = function(...)\n");
-
+        output.append("\"] = {\n");
         addIndent();
 
+        indent(output);
+        output.append("isstatic = ")
+            .append(method.access_flags & METHOD_ACC_STATIC ? "true,\n" : "false,\n");
+        indent(output);
+        output.append("isnative = ")
+            .append(method.access_flags & METHOD_ACC_NATIVE ? "true,\n" : "false,\n");
+        indent(output);
+        output.append("isabstract = ")
+            .append(method.access_flags & METHOD_ACC_ABSTRACT ? "true,\n" : "false,\n");
+
+        bool is_native = false;
         Attribute* code_attribute = nullptr;
         for (uint16_t j = 0; j < method.attribute_count; j++) {
             Attribute* attribute = &method.attribute_list[j];
@@ -117,528 +129,656 @@ int outputClass(Class& _class, std::string& output) {
                 code_attribute = attribute;
         }
         if (!code_attribute) {
-            std::cerr << "[ERROR]: failed to find code attribute in class " << class_name << "'s " << method.name->Utf8.bytes << " method" << i;
-            return 1;
+            if (method.access_flags & METHOD_ACC_NATIVE)
+                is_native = true;
+            else {
+                std::cerr << "[ERROR]: failed to find code attribute in class " << class_name << "'s " << method.name->Utf8.bytes << " method" << i << std::endl;;
+                return 1;
+            }
         }
 
         indent(output);
-        output.append("local pc = 0\n");
-        indent(output);
-        output.append("local local_array = table.create(")
-            .append(std::to_string(code_attribute->Code.max_locals))
-            .append(")\n");
+        output.append("func = function(...)\n");
 
-        indent(output);
-        output.append("for i = 1, select('#', ...) do\n");
         addIndent();
 
-        indent(output);
-        output.append("local_array[i] = select(i, ...)\n");
+        if (is_native) {
+            indent(output);
+            output.append("local classname = \"")
+                .append(class_name)
+                .append("\"\n");
 
-        subIndent();
-        indent(output);
-        output.append("end\n");
+            indent(output);
+            output.append("natives.registerDefault()\n");
 
-        indent(output);
-        output.append("local stack = table.create(")
-            .append(std::to_string(code_attribute->Code.max_stack))
-            .append(")\n");
+            indent(output);
+            output.append("local methodtype = \"");
+            output.insert(output.end(), method.descriptor->Utf8.bytes, method.descriptor->Utf8.bytes + method.descriptor->Utf8.bytes_size);
+            output.append("\"\n");
 
-        indent(output);
-        output.append("local function push(value)\n");
-        addIndent();
+            indent(output);
+            output.append("local descriptor = descriptor_parser.parseMethodDescriptor(methodtype)\n");
+            indent(output);
+            output.append("local parameter_count = descriptor.parameter_count\n");
 
-        indent(output);
-        output.append("stack[#stack + 1] = value\n");
+            indent(output);
+            output.append("local native = natives.findNative(\"")
+                .append(class_name)
+                .append("\", \"");
+            output.insert(output.end(), method.name->Utf8.bytes, method.name->Utf8.bytes + method.name->Utf8.bytes_size);
+            output.push_back('-');
+            output.insert(output.end(), method.descriptor->Utf8.bytes, method.descriptor->Utf8.bytes + method.descriptor->Utf8.bytes_size);
+            output.append("\", methodtype)\n");
 
-        subIndent();
-        indent(output);
-        output.append("end\n");
+            indent(output);
+            output.append("local argarray = table.pack(...)\n");
 
-        indent(output);
-        output.append("local function pop()\n");
-        addIndent();
+            indent(output);
+            output.append("local results = table.pack(native(table.unpack(argarray, 1, parameter_count)))\n");
 
-        indent(output);
-        output.append("local index = #stack\n");
-        indent(output);
-        output.append("local value = stack[index]\n");
-        indent(output);
-        output.append("stack[index] = nil\n");
-        indent(output);
-        output.append("return value\n");
+            indent(output);
+            output.append("return table.unpack(results, 1, results.n)\n");
+        } else {
+            indent(output);
+            output.append("local pc = 0\n");
+            indent(output);
+            output.append("local local_array = table.create(")
+                .append(std::to_string(code_attribute->Code.max_locals))
+                .append(")\n");
 
-        subIndent();
-        indent(output);
-        output.append("end\n");
+            indent(output);
+            output.append("for i = 1, select('#', ...) do\n");
+            addIndent();
 
-        indent(output);
-        output.append("local argarrayscratch = table.create(256)\n");
+            indent(output);
+            output.append("local_array[i] = select(i, ...)\n");
 
-        indent(output);
-        output.append("while true do\n");
-        addIndent();
+            subIndent();
+            indent(output);
+            output.append("end\n");
 
-        for (uint32_t pc = 0; pc < code_attribute->Code.code_count; pc++) {
-            uint8_t code = code_attribute->Code.code_list[pc];
+            indent(output);
+            output.append("local stack = table.create(")
+                .append(std::to_string(code_attribute->Code.max_stack))
+                .append(")\n");
 
-            uint32_t old_pc = pc;
+            indent(output);
+            output.append("local function push(value)\n");
+            addIndent();
 
-            #define CLOSEOPCONDITIONAL()     \
-                    subIndent();             \
-                    indent(output);          \
-                    output.append("end\n");  \
-                    break;                   \
-                }                            
-            #define OPCONDITIONAL(op)                \
-                CLOSEOPCONDITIONAL()                 \
-                case op: {                           \
-                    indent(output);                  \
-                    output.append("if pc == ")       \
-                        .append(std::to_string(pc))  \
-                        .append(" then\n");          \
-                    addIndent();                      
+            indent(output);
+            output.append("stack[#stack + 1] = value\n");
 
-            #define SETPC indent(output); output.append("pc = ").append(std::to_string(pc + 1)).push_back('\n');
+            subIndent();
+            indent(output);
+            output.append("end\n");
 
-            #define GETAUX(resultvar) uint8_t resultvar = code_attribute->Code.code_list[++pc];
-            #define GETAUXCONSTINDEX(resultvar) \
-                uint16_t resultvar; { \
-                GETAUX(indexbyte1) \
-                GETAUX(indexbyte2) \
-                index = (indexbyte1 << 8) | indexbyte2; \
+            indent(output);
+            output.append("local function pop()\n");
+            addIndent();
+
+            indent(output);
+            output.append("local index = #stack\n");
+            indent(output);
+            output.append("local value = stack[index]\n");
+            indent(output);
+            output.append("stack[index] = nil\n");
+            indent(output);
+            output.append("return value\n");
+
+            subIndent();
+            indent(output);
+            output.append("end\n");
+
+            indent(output);
+            output.append("local argarrayscratch = table.create(256)\n");
+
+            indent(output);
+            output.append("while true do\n");
+            addIndent();
+
+            for (uint32_t pc = 0; pc < code_attribute->Code.code_count; pc++) {
+                uint8_t code = code_attribute->Code.code_list[pc];
+
+                uint32_t old_pc = pc;
+
+                #define CLOSEOPCONDITIONAL()     \
+                        subIndent();             \
+                        indent(output);          \
+                        output.append("end\n");  \
+                        break;                   \
+                    }                            
+                #define OPCONDITIONAL(op)                \
+                    CLOSEOPCONDITIONAL()                 \
+                    case op: {                           \
+                        indent(output);                  \
+                        output.append("if pc == ")       \
+                            .append(std::to_string(pc))  \
+                            .append(" then\n");          \
+                        addIndent();                      
+
+                #define SETPC indent(output); output.append("pc = ").append(std::to_string(pc + 1)).push_back('\n');
+
+                #define GETAUX(resultvar) uint8_t resultvar = code_attribute->Code.code_list[++pc];
+                #define GETAUXCONSTINDEX(resultvar) \
+                    uint16_t resultvar; { \
+                    GETAUX(indexbyte1) \
+                    GETAUX(indexbyte2) \
+                    index = (indexbyte1 << 8) | indexbyte2; \
+                    }
+
+                switch (code) {
+                    case uint8_t(-1): { break;
+                    OPCONDITIONAL(0x4) // iconst_1
+                        indent(output);
+                        output.append("push(1)\n");
+
+                        SETPC
+                    OPCONDITIONAL(0x12) // ldc
+                        GETAUX(index);
+
+                        if (index < 1 || index > _class.constant_pool_count) {
+                            std::cerr << "[ERROR]: instruction #" << old_pc << "'s index was out of bounds" << std::endl;
+                            return 1;
+                        }
+                        Constant& constant = _class.constant_pool[index - 1];
+                        // TODO: reference, class, and method types
+                        switch (constant.tag) {
+                            case ConstantType::String:
+                                indent(output);
+                                output.append("push(utf8.char(");
+                                for (uint16_t j = 0; j < constant.String.string->Utf8.bytes_size - 1; j++)
+                                    output.append(std::to_string((int) constant.String.string->Utf8.bytes[j]))
+                                        .append(", ");
+
+                                if (constant.String.string->Utf8.bytes_size)
+                                    output.append(std::to_string((int) constant.String.string->Utf8.bytes[constant.String.string->Utf8.bytes_size - 1]));
+                                output.append("))\n");
+
+                                SETPC
+                                break;
+                            case ConstantType::Integer:
+                                indent(output);
+                                output.append("push(")
+                                    .append(std::to_string(constant.Integer.bytes))
+                                    .append(")\n");
+
+                                SETPC
+                                break;
+                            case ConstantType::Float:
+                                indent(output);
+                                output.append("push(")
+                                    .append(floatTostring(constant.Float.value))
+                                    .append(")\n");
+
+                                SETPC
+                                break;
+                            default:
+                                std::cerr << "[ERROR]: expected String, Integer, or Float for ldc instruction #" << old_pc << "'s tag but got " << constant_type_names.at(constant.tag) << std::endl;
+                                return 1;
+                                break;
+                        }
+                    OPCONDITIONAL(0x14) // ldc2_w
+                        GETAUXCONSTINDEX(index)
+
+                        if (index < 1 || index > _class.constant_pool_count) {
+                            std::cerr << "[ERROR]: instruction #" << old_pc << "'s index was out of bounds" << std::endl;
+                            return 1;
+                        }
+                        Constant& constant = _class.constant_pool[index - 1];
+                        switch (constant.tag) {
+                            case ConstantType::Long:
+                                indent(output);
+                                output.append("push(")
+                                    .append(std::to_string(constant.Long.bytes))
+                                    .append(")\n");
+                                break;
+                            case ConstantType::Double:
+                                indent(output);
+                                output.append("push(")
+                                    .append(doubleTostring(constant.Double.value))
+                                    .append(")\n");
+                                break;
+
+                            default:
+                                std::cerr << "[ERROR]: expected Double for ldc2_w instruction #" << old_pc << "'s tag but got " << constant_type_names.at(constant.tag) << std::endl;
+                                return 1;
+                                break;
+                        }
+
+                        SETPC
+                    OPCONDITIONAL(0x2a) // aload_0
+                        indent(output);
+                        output.append("push(local_array[1])\n");
+                        SETPC
+                    OPCONDITIONAL(0x2b) // aload_1
+                        indent(output);
+                        output.append("push(local_array[2])\n");
+                        SETPC
+                    OPCONDITIONAL(0x4c) // astore_1
+                        // TODO: check returnAddress or reference type
+                        indent(output);
+                        output.append("local_array[2] = pop()\n");
+                        SETPC
+                    OPCONDITIONAL(0x59) // dup
+                        // TODO: check category 1
+                        indent(output);
+                        output.append("push(stack[#stack])\n");
+                        SETPC
+                    OPCONDITIONAL(0xb1) // return
+                        indent(output);
+                        output.append("return\n");
+                    OPCONDITIONAL(0xb2) // getstatic
+                        GETAUXCONSTINDEX(index)
+
+                        if (index < 1 || index > _class.constant_pool_count) {
+                            std::cerr << "[ERROR]: instruction #" << old_pc << "'s index was out of bounds" << std::endl;
+                            return 1;
+                        }
+                        Constant& constant = _class.constant_pool[index - 1];
+                        if (constant.tag != ConstantType::Fieldref) {
+                            std::cerr << "[ERROR]: expected Fieldref for getstatic instruction #" << old_pc << "'s tag but got " << constant_type_names.at(constant.tag) << std::endl;
+                            return 1;
+                        }
+
+                        indent(output);
+                        output.append("local field, class = classloader.lookupField(\"");
+                        output.insert(output.end(), constant.GeneralRef._class->Class.name->Utf8.bytes, constant.GeneralRef._class->Class.name->Utf8.bytes + constant.GeneralRef._class->Class.name->Utf8.bytes_size);
+
+                        output.append("\", \"");
+                        output.insert(output.end(), constant.GeneralRef.name_and_type->NameAndType.name->Utf8.bytes, constant.GeneralRef.name_and_type->NameAndType.name->Utf8.bytes + constant.GeneralRef.name_and_type->NameAndType.name->Utf8.bytes_size);
+                        output.append("\", \"");
+                        output.insert(output.end(), constant.GeneralRef.name_and_type->NameAndType.descriptor->Utf8.bytes, constant.GeneralRef.name_and_type->NameAndType.descriptor->Utf8.bytes + constant.GeneralRef.name_and_type->NameAndType.descriptor->Utf8.bytes_size);
+                        output.append("\", true)\n");
+
+                        indent(output);
+                        output.append("local object = class.staticinstance\n");
+                        indent(output);
+                        output.append("local value = object[field]\n");
+                        indent(output);
+                        output.append("push(value)\n");
+
+                        SETPC
+
+                    OPCONDITIONAL(0xb3) // putstatic
+                        GETAUXCONSTINDEX(index)
+
+                        if (index < 1 || index > _class.constant_pool_count) {
+                            std::cerr << "[ERROR]: instruction #" << old_pc << "'s index was out of bounds" << std::endl;
+                            return 1;
+                        }
+                        Constant& constant = _class.constant_pool[index - 1];
+                        if (constant.tag != ConstantType::Fieldref) {
+                            std::cerr << "[ERROR]: expected Fieldref for putstatic instruction #" << old_pc << "'s tag but got " << constant_type_names.at(constant.tag) << std::endl;
+                            return 1;
+                        }
+
+                        indent(output);
+                        output.append("local field, class = classloader.lookupField(\"");
+                        output.insert(output.end(), constant.GeneralRef._class->Class.name->Utf8.bytes, constant.GeneralRef._class->Class.name->Utf8.bytes + constant.GeneralRef._class->Class.name->Utf8.bytes_size);
+
+                        output.append("\", \"");
+                        output.insert(output.end(), constant.GeneralRef.name_and_type->NameAndType.name->Utf8.bytes, constant.GeneralRef.name_and_type->NameAndType.name->Utf8.bytes + constant.GeneralRef.name_and_type->NameAndType.name->Utf8.bytes_size);
+                        output.append("\", \"");
+                        output.insert(output.end(), constant.GeneralRef.name_and_type->NameAndType.descriptor->Utf8.bytes, constant.GeneralRef.name_and_type->NameAndType.descriptor->Utf8.bytes + constant.GeneralRef.name_and_type->NameAndType.descriptor->Utf8.bytes_size);
+                        output.append("\", true)\n");
+
+                        indent(output);
+                        output.append("local object = class.staticinstance\n");
+                        indent(output);
+                        output.append("local value = pop()\n");
+                        indent(output);
+                        output.append("object[field] = value\n");
+
+                        SETPC
+                    OPCONDITIONAL(0xb4) // getfield
+                        GETAUXCONSTINDEX(index);
+
+                        if (index < 1 || index > _class.constant_pool_count) {
+                            std::cerr << "[ERROR]: instruction #" << old_pc << "'s index was out of bounds" << std::endl;
+                            return 1;
+                        }
+                        Constant& constant = _class.constant_pool[index - 1];
+                        if (constant.tag != ConstantType::Fieldref) {
+                            std::cerr << "[ERROR]: expected Fieldref for getfield instruction #" << old_pc << "'s tag but got " << constant_type_names.at(constant.tag) << std::endl;
+                            return 1;
+                        }
+
+                        indent(output);
+                        output.append("local field = classloader.lookupField(\"");
+                        output.insert(output.end(), constant.GeneralRef._class->Class.name->Utf8.bytes, constant.GeneralRef._class->Class.name->Utf8.bytes + constant.GeneralRef._class->Class.name->Utf8.bytes_size);
+
+                        output.append("\", \"");
+                        output.insert(output.end(), constant.GeneralRef.name_and_type->NameAndType.name->Utf8.bytes, constant.GeneralRef.name_and_type->NameAndType.name->Utf8.bytes + constant.GeneralRef.name_and_type->NameAndType.name->Utf8.bytes_size);
+                        output.append("\", \"");
+                        output.insert(output.end(), constant.GeneralRef.name_and_type->NameAndType.descriptor->Utf8.bytes, constant.GeneralRef.name_and_type->NameAndType.descriptor->Utf8.bytes + constant.GeneralRef.name_and_type->NameAndType.descriptor->Utf8.bytes_size);
+                        output.append("\", true)\n");
+
+                        // TODO: check protected
+                        // TODO: check array type
+
+                        indent(output);
+                        output.append("local object = pop()\n");
+                        indent(output);
+                        output.append("push(object[field])\n");
+
+                        SETPC
+                    OPCONDITIONAL(0xb5) // putfield
+                        GETAUXCONSTINDEX(index);
+
+                        if (index < 1 || index > _class.constant_pool_count) {
+                            std::cerr << "[ERROR]: instruction #" << old_pc << "'s index was out of bounds" << std::endl;
+                            return 1;
+                        }
+                        Constant& constant = _class.constant_pool[index - 1];
+                        if (constant.tag != ConstantType::Fieldref) {
+                            std::cerr << "[ERROR]: expected Fieldref for putfield instruction #" << old_pc << "'s tag but got " << constant_type_names.at(constant.tag) << std::endl;
+                            return 1;
+                        }
+
+                        indent(output);
+                        output.append("local field = classloader.lookupField(\"");
+                        output.insert(output.end(), constant.GeneralRef._class->Class.name->Utf8.bytes, constant.GeneralRef._class->Class.name->Utf8.bytes + constant.GeneralRef._class->Class.name->Utf8.bytes_size);
+
+                        output.append("\", \"");
+                        output.insert(output.end(), constant.GeneralRef.name_and_type->NameAndType.name->Utf8.bytes, constant.GeneralRef.name_and_type->NameAndType.name->Utf8.bytes + constant.GeneralRef.name_and_type->NameAndType.name->Utf8.bytes_size);
+                        output.append("\", \"");
+                        output.insert(output.end(), constant.GeneralRef.name_and_type->NameAndType.descriptor->Utf8.bytes, constant.GeneralRef.name_and_type->NameAndType.descriptor->Utf8.bytes + constant.GeneralRef.name_and_type->NameAndType.descriptor->Utf8.bytes_size);
+                        output.append("\", true)\n");
+
+                        indent(output);
+                        output.append("local value = pop()\n");
+                        indent(output);
+                        output.append("local object = pop()\n");
+                        indent(output);
+                        output.append("object[field] = value\n");
+
+                        SETPC
+                    OPCONDITIONAL(0xb6) // invokevirtual
+                        GETAUXCONSTINDEX(index)
+
+                        if (index < 1 || index > _class.constant_pool_count) {
+                            std::cerr << "[ERROR]: instruction #" << old_pc << "'s index was out of bounds" << std::endl;
+                            return 1;
+                        }
+                        Constant& constant = _class.constant_pool[index - 1];
+                        // TODO: InterfaceMethodref
+                        if (constant.tag != ConstantType::Methodref) {
+                            std::cerr << "[ERROR]: expected Methodref for invokevirtual instruction #" << old_pc << "'s tag but got " << constant_type_names.at(constant.tag) << std::endl;
+                            return 1;
+                        }
+
+                        // TODO: handle protected flag
+                        // TODO: signature polymorphic methods (see 2.9)
+
+                        indent(output);
+                        output.append("local methodtype = \"");
+                        output.insert(output.end(), constant.GeneralRef.name_and_type->NameAndType.descriptor->Utf8.bytes, constant.GeneralRef.name_and_type->NameAndType.descriptor->Utf8.bytes + constant.GeneralRef.name_and_type->NameAndType.descriptor->Utf8.bytes_size);
+                        output.append("\"\n");
+
+                        indent(output);
+                        output.append("local descriptor = descriptor_parser.parseMethodDescriptor(methodtype)\n");
+                        indent(output);
+                        output.append("local parameter_count = descriptor.parameter_count\n");
+
+                        indent(output);
+                        output.append("local method, methodclass = classloader.lookupMethod(\"");
+                        output.insert(output.end(), constant.GeneralRef._class->Class.name->Utf8.bytes, constant.GeneralRef._class->Class.name->Utf8.bytes + constant.GeneralRef._class->Class.name->Utf8.bytes_size);
+                        output.append("\", \"");
+                        output.insert(output.end(), constant.GeneralRef.name_and_type->NameAndType.name->Utf8.bytes, constant.GeneralRef.name_and_type->NameAndType.name->Utf8.bytes + constant.GeneralRef.name_and_type->NameAndType.name->Utf8.bytes_size);
+                        output.append("\", methodtype, true)\n");
+
+                        indent(output);
+                        output.append("local object = stack[#stack - parameter_count]\n");
+
+                        // TODO: check if object is a valid instance?
+
+                        indent(output);
+                        output.append("local methodoverride, methodclassoverride\n");
+                        indent(output);
+                        output.append("pcall(function()\n");
+                        addIndent();
+
+                        indent(output);
+                        output.append("methodoverride, methodclassoverride = classloader.lookupMethod(object.class.name, \"");
+                        output.insert(output.end(), constant.GeneralRef.name_and_type->NameAndType.name->Utf8.bytes, constant.GeneralRef.name_and_type->NameAndType.name->Utf8.bytes + constant.GeneralRef.name_and_type->NameAndType.name->Utf8.bytes_size);
+                        output.append("\", methodtype, true)\n");
+
+                        subIndent();
+                        indent(output);
+                        output.append("end)\n");
+
+                        indent(output);
+                        output.append("if methodoverride then\n");
+                        addIndent();
+
+                        indent(output);
+                        output.append("method, methodclass = methodoverride, methodclassoverride\n");
+                        subIndent();
+
+                        indent(output);
+                        output.append("end\n");
+
+                        indent(output);
+                        output.append("for i = parameter_count, 1, -1 do\n");
+                        addIndent();
+
+                        indent(output);
+                        output.append("argarrayscratch[i] = pop()\n");
+
+                        subIndent();
+                        indent(output);
+                        output.append("end\n");
+
+                        indent(output);
+                        output.append("local results = table.pack(method.func(object, table.unpack(argarrayscratch, 1, parameter_count)))\n");
+
+                        indent(output);
+                        output.append("table.clear(argarrayscratch)\n");
+
+                        indent(output);
+                        output.append("for i = 1, results.n do\n");
+                        addIndent();
+
+                        indent(output);
+                        output.append("push(results[i])\n");
+
+                        subIndent();
+                        indent(output);
+                        output.append("end\n");
+
+                        SETPC
+                    OPCONDITIONAL(0xb7) // invokespecial
+                        GETAUXCONSTINDEX(index)
+
+                        if (index < 1 || index > _class.constant_pool_count) {
+                            std::cerr << "[ERROR]: instruction #" << old_pc << "'s index was out of bounds" << std::endl;
+                            return 1;
+                        }
+                        Constant& constant = _class.constant_pool[index - 1];
+                        // TODO: InterfaceMethodref
+                        if (constant.tag != ConstantType::Methodref) {
+                            std::cerr << "[ERROR]: expected Methodref for invokespecial instruction #" << old_pc << "'s tag but got " << constant_type_names.at(constant.tag) << std::endl;
+                            return 1;
+                        }
+
+                        indent(output);
+                        output.append("local methodtype = \"");
+                        output.insert(output.end(), constant.GeneralRef.name_and_type->NameAndType.descriptor->Utf8.bytes, constant.GeneralRef.name_and_type->NameAndType.descriptor->Utf8.bytes + constant.GeneralRef.name_and_type->NameAndType.descriptor->Utf8.bytes_size);
+                        output.append("\"\n");
+
+                        indent(output);
+                        output.append("local descriptor = descriptor_parser.parseMethodDescriptor(methodtype)\n");
+                        indent(output);
+                        output.append("local parameter_count = descriptor.parameter_count\n");
+
+                        indent(output);
+                        output.append("local method = classloader.lookupMethodSpecial(\"")
+                            .append(class_name)
+                            .append("\", \"");
+                        output.insert(output.end(), constant.GeneralRef._class->Class.name->Utf8.bytes, constant.GeneralRef._class->Class.name->Utf8.bytes + constant.GeneralRef._class->Class.name->Utf8.bytes_size);
+                        output.append("\", \"");
+                        output.insert(output.end(), constant.GeneralRef.name_and_type->NameAndType.name->Utf8.bytes, constant.GeneralRef.name_and_type->NameAndType.name->Utf8.bytes + constant.GeneralRef.name_and_type->NameAndType.name->Utf8.bytes_size);
+                        output.append("\", methodtype, true)\n");
+
+                        indent(output);
+                        output.append("local object = stack[#stack - parameter_count]\n");
+
+                        // TODO: check if object is a valid instance?
+
+                        indent(output);
+                        output.append("for i = parameter_count, 1, -1 do\n");
+                        addIndent();
+
+                        indent(output);
+                        output.append("argarrayscratch[i] = pop()\n");
+
+                        subIndent();
+                        indent(output);
+                        output.append("end\n");
+
+                        indent(output);
+                        output.append("local results = table.pack(method.func(object, table.unpack(argarrayscratch, 1, parameter_count)))\n");
+
+                        indent(output);
+                        output.append("table.clear(argarrayscratch)\n");
+
+                        indent(output);
+                        output.append("for i = 1, results.n do\n");
+                        addIndent();
+
+                        indent(output);
+                        output.append("push(results[i])\n");
+
+                        subIndent();
+                        indent(output);
+                        output.append("end\n");
+
+                        SETPC
+                    OPCONDITIONAL(0xb8) // invokestatic
+                        GETAUXCONSTINDEX(index)
+
+                        if (index < 1 || index > _class.constant_pool_count) {
+                            std::cerr << "[ERROR]: instruction #" << old_pc << "'s index was out of bounds" << std::endl;
+                            return 1;
+                        }
+                        Constant& constant = _class.constant_pool[index - 1];
+                        // TODO: InterfaceMethodref
+                        if (constant.tag != ConstantType::Methodref) {
+                            std::cerr << "[ERROR]: expected Methodref for invokestatic instruction #" << old_pc << "'s tag but got " << constant_type_names.at(constant.tag) << std::endl;
+                            return 1;
+                        }
+
+                        if (constant.GeneralRef.name_and_type->NameAndType.name->Utf8.atom == Atom_kInstanceInitialization || constant.GeneralRef.name_and_type->NameAndType.name->Utf8.atom == Atom_kClassInitialization) {
+                            std::cerr << "[ERROR]: invokestatic instruction #" << old_pc << "'s method was an instance or class initialization method" << std::endl;
+                            return 1;
+                        }
+
+                        indent(output);
+                        output.append("local methodtype = \"");
+                        output.insert(output.end(), constant.GeneralRef.name_and_type->NameAndType.descriptor->Utf8.bytes, constant.GeneralRef.name_and_type->NameAndType.descriptor->Utf8.bytes + constant.GeneralRef.name_and_type->NameAndType.descriptor->Utf8.bytes_size);
+                        output.append("\"\n");
+
+                        indent(output);
+                        output.append("local descriptor = descriptor_parser.parseMethodDescriptor(methodtype)\n");
+                        indent(output);
+                        output.append("local parameter_count = descriptor.parameter_count\n");
+
+                        indent(output);
+                        output.append("local method, methodclass = classloader.lookupMethod(\"");
+                        output.insert(output.end(), constant.GeneralRef._class->Class.name->Utf8.bytes, constant.GeneralRef._class->Class.name->Utf8.bytes + constant.GeneralRef._class->Class.name->Utf8.bytes_size);
+                        output.append("\", \"");
+                        output.insert(output.end(), constant.GeneralRef.name_and_type->NameAndType.name->Utf8.bytes, constant.GeneralRef.name_and_type->NameAndType.name->Utf8.bytes + constant.GeneralRef.name_and_type->NameAndType.name->Utf8.bytes_size);
+                        output.append("\", methodtype, true)\n");
+
+                        indent(output);
+                        output.append("assert(method.isstatic, \"method was not static in invokestatic instruction #")
+                            .append(std::to_string(old_pc))
+                            .append("\")\n");
+                        indent(output);
+                        output.append("assert(not method.isabstract, \"method was abstract in invokestatic instruction #")
+                            .append(std::to_string(old_pc))
+                            .append("\")\n");
+
+                        indent(output);
+                        output.append("local object = methodclass.staticinstance\n");
+
+                        // TODO: check if object is a valid instance?
+
+                        indent(output);
+                        output.append("for i = parameter_count, 1, -1 do\n");
+                        addIndent();
+
+                        indent(output);
+                        output.append("argarrayscratch[i] = pop()\n");
+
+                        subIndent();
+                        indent(output);
+                        output.append("end\n");
+
+                        indent(output);
+                        output.append("local results = table.pack(method.func(object, table.unpack(argarrayscratch, 1, parameter_count)))\n");
+
+                        indent(output);
+                        output.append("table.clear(argarrayscratch)\n");
+
+                        indent(output);
+                        output.append("for i = 1, results.n do\n");
+                        addIndent();
+
+                        indent(output);
+                        output.append("push(results[i])\n");
+
+                        subIndent();
+                        indent(output);
+                        output.append("end\n");
+
+                        SETPC
+                    OPCONDITIONAL(0xbb) // new
+                        GETAUXCONSTINDEX(index)
+
+                        if (index < 1 || index > _class.constant_pool_count) {
+                            std::cerr << "[ERROR]: instruction #" << old_pc << "'s index was out of bounds" << std::endl;
+                            return 1;
+                        }
+                        Constant& constant = _class.constant_pool[index - 1];
+                        if (constant.tag != ConstantType::Class) {
+                            std::cerr << "[ERROR]: expected Class for new instruction #" << old_pc << "'s tag but got " << constant_type_names.at(constant.tag) << std::endl;
+                            return 1;
+                        }
+
+                        indent(output);
+                        output.append("push(classloader.newObjectFromClassName(\"");
+                        output.insert(output.end(), constant.Class.name->Utf8.bytes, constant.Class.name->Utf8.bytes + constant.Class.name->Utf8.bytes_size);
+                        output.append("\"))\n");
+
+                        SETPC
+
+                    CLOSEOPCONDITIONAL()
+                    default:
+                        std::cerr << "[WARNING]: unhandled operand " << int(code) << std::endl;
+                        break;
                 }
 
-            switch (code) {
-                case uint8_t(-1): { break;
-                OPCONDITIONAL(0x4) // iconst_1
-                    indent(output);
-                    output.append("push(1)\n");
-
-                    SETPC
-                OPCONDITIONAL(0x12) // ldc
-                    GETAUX(index);
-
-                    if (index < 1 || index > _class.constant_pool_count) {
-                        std::cerr << "[ERROR]: instruction #" << old_pc << "'s index was out of bounds" << std::endl;
-                        return 1;
-                    }
-                    Constant& constant = _class.constant_pool[index - 1];
-                    // TODO: reference, class, and method types
-                    switch (constant.tag) {
-                        case ConstantType::String:
-                            indent(output);
-                            output.append("push(utf8.char(");
-                            for (uint16_t j = 0; j < constant.String.string->Utf8.bytes_size - 1; j++)
-                                output.append(std::to_string((int) constant.String.string->Utf8.bytes[j]))
-                                    .append(", ");
-
-                            if (constant.String.string->Utf8.bytes_size)
-                                output.append(std::to_string((int) constant.String.string->Utf8.bytes[constant.String.string->Utf8.bytes_size - 1]));
-                            output.append("))\n");
-
-                            SETPC
-                            break;
-                        case ConstantType::Integer:
-                            indent(output);
-                            output.append("push(")
-                                .append(std::to_string(constant.Integer.bytes))
-                                .append(")\n");
-
-                            SETPC
-                            break;
-                        case ConstantType::Float:
-                            indent(output);
-                            output.append("push(")
-                                .append(floatTostring(constant.Float.value))
-                                .append(")\n");
-
-                            SETPC
-                            break;
-                        default:
-                            std::cerr << "[ERROR]: expected String, Integer, or Float for ldc instruction #" << old_pc << "'s tag but got " << constant_type_names.at(constant.tag) << std::endl;
-                            return 1;
-                            break;
-                    }
-                OPCONDITIONAL(0x14) // ldc2_w
-                    GETAUXCONSTINDEX(index)
-
-                    if (index < 1 || index > _class.constant_pool_count) {
-                        std::cerr << "[ERROR]: instruction #" << old_pc << "'s index was out of bounds" << std::endl;
-                        return 1;
-                    }
-                    Constant& constant = _class.constant_pool[index - 1];
-                    switch (constant.tag) {
-                        case ConstantType::Long:
-                            indent(output);
-                            output.append("push(")
-                                .append(std::to_string(constant.Long.bytes))
-                                .append(")\n");
-                            break;
-                        case ConstantType::Double:
-                            indent(output);
-                            output.append("push(")
-                                .append(doubleTostring(constant.Double.value))
-                                .append(")\n");
-                            break;
-
-                        default:
-                            std::cerr << "[ERROR]: expected Double for ldc2_w instruction #" << old_pc << "'s tag but got " << constant_type_names.at(constant.tag) << std::endl;
-                            return 1;
-                            break;
-                    }
-
-                    SETPC
-                OPCONDITIONAL(0x2a) // aload_0
-                    indent(output);
-                    output.append("push(local_array[1])\n");
-                    SETPC
-                OPCONDITIONAL(0x2b) // aload_1
-                    indent(output);
-                    output.append("push(local_array[2])\n");
-                    SETPC
-                OPCONDITIONAL(0x4c) // astore_1
-                    // TODO: check returnAddress or reference type
-                    indent(output);
-                    output.append("local_array[2] = pop()\n");
-                    SETPC
-                OPCONDITIONAL(0x59) // dup
-                    // TODO: check category 1
-                    indent(output);
-                    output.append("push(stack[#stack])\n");
-                    SETPC
-                OPCONDITIONAL(0xb1) // return
-                    indent(output);
-                    output.append("return\n");
-                OPCONDITIONAL(0xb2) // getstatic
-                    GETAUXCONSTINDEX(index)
-
-                    if (index < 1 || index > _class.constant_pool_count) {
-                        std::cerr << "[ERROR]: instruction #" << old_pc << "'s index was out of bounds" << std::endl;
-                        return 1;
-                    }
-                    Constant& constant = _class.constant_pool[index - 1];
-                    if (constant.tag != ConstantType::Fieldref) {
-                        std::cerr << "[ERROR]: expected Fieldref for getstatic instruction #" << old_pc << "'s tag but got " << constant_type_names.at(constant.tag) << std::endl;
-                        return 1;
-                    }
-
-                    indent(output);
-                    output.append("local field, class = classloader.lookupField(\"");
-                    output.insert(output.end(), constant.GeneralRef._class->Class.name->Utf8.bytes, constant.GeneralRef._class->Class.name->Utf8.bytes + constant.GeneralRef._class->Class.name->Utf8.bytes_size);
-
-                    output.append("\", \"");
-                    output.insert(output.end(), constant.GeneralRef.name_and_type->NameAndType.name->Utf8.bytes, constant.GeneralRef.name_and_type->NameAndType.name->Utf8.bytes + constant.GeneralRef.name_and_type->NameAndType.name->Utf8.bytes_size);
-                    output.append("\", \"");
-                    output.insert(output.end(), constant.GeneralRef.name_and_type->NameAndType.descriptor->Utf8.bytes, constant.GeneralRef.name_and_type->NameAndType.descriptor->Utf8.bytes + constant.GeneralRef.name_and_type->NameAndType.descriptor->Utf8.bytes_size);
-                    output.append("\", true)\n");
-
-                    indent(output);
-                    output.append("local object = class.staticinstance\n");
-                    indent(output);
-                    output.append("local value = object[field]\n");
-                    indent(output);
-                    output.append("push(value)\n");
-
-                    SETPC
-
-                OPCONDITIONAL(0xb3) // putstatic
-                    GETAUXCONSTINDEX(index)
-
-                    if (index < 1 || index > _class.constant_pool_count) {
-                        std::cerr << "[ERROR]: instruction #" << old_pc << "'s index was out of bounds" << std::endl;
-                        return 1;
-                    }
-                    Constant& constant = _class.constant_pool[index - 1];
-                    if (constant.tag != ConstantType::Fieldref) {
-                        std::cerr << "[ERROR]: expected Fieldref for putstatic instruction #" << old_pc << "'s tag but got " << constant_type_names.at(constant.tag) << std::endl;
-                        return 1;
-                    }
-
-                    indent(output);
-                    output.append("local field, class = classloader.lookupField(\"");
-                    output.insert(output.end(), constant.GeneralRef._class->Class.name->Utf8.bytes, constant.GeneralRef._class->Class.name->Utf8.bytes + constant.GeneralRef._class->Class.name->Utf8.bytes_size);
-
-                    output.append("\", \"");
-                    output.insert(output.end(), constant.GeneralRef.name_and_type->NameAndType.name->Utf8.bytes, constant.GeneralRef.name_and_type->NameAndType.name->Utf8.bytes + constant.GeneralRef.name_and_type->NameAndType.name->Utf8.bytes_size);
-                    output.append("\", \"");
-                    output.insert(output.end(), constant.GeneralRef.name_and_type->NameAndType.descriptor->Utf8.bytes, constant.GeneralRef.name_and_type->NameAndType.descriptor->Utf8.bytes + constant.GeneralRef.name_and_type->NameAndType.descriptor->Utf8.bytes_size);
-                    output.append("\", true)\n");
-
-                    indent(output);
-                    output.append("local object = class.staticinstance\n");
-                    indent(output);
-                    output.append("local value = pop()\n");
-                    indent(output);
-                    output.append("object[field] = value\n");
-
-                    SETPC
-                OPCONDITIONAL(0xb4) // getfield
-                    GETAUXCONSTINDEX(index);
-
-                    if (index < 1 || index > _class.constant_pool_count) {
-                        std::cerr << "[ERROR]: instruction #" << old_pc << "'s index was out of bounds" << std::endl;
-                        return 1;
-                    }
-                    Constant& constant = _class.constant_pool[index - 1];
-                    if (constant.tag != ConstantType::Fieldref) {
-                        std::cerr << "[ERROR]: expected Fieldref for getfield instruction #" << old_pc << "'s tag but got " << constant_type_names.at(constant.tag) << std::endl;
-                        return 1;
-                    }
-
-                    indent(output);
-                    output.append("local field = classloader.lookupField(\"");
-                    output.insert(output.end(), constant.GeneralRef._class->Class.name->Utf8.bytes, constant.GeneralRef._class->Class.name->Utf8.bytes + constant.GeneralRef._class->Class.name->Utf8.bytes_size);
-
-                    output.append("\", \"");
-                    output.insert(output.end(), constant.GeneralRef.name_and_type->NameAndType.name->Utf8.bytes, constant.GeneralRef.name_and_type->NameAndType.name->Utf8.bytes + constant.GeneralRef.name_and_type->NameAndType.name->Utf8.bytes_size);
-                    output.append("\", \"");
-                    output.insert(output.end(), constant.GeneralRef.name_and_type->NameAndType.descriptor->Utf8.bytes, constant.GeneralRef.name_and_type->NameAndType.descriptor->Utf8.bytes + constant.GeneralRef.name_and_type->NameAndType.descriptor->Utf8.bytes_size);
-                    output.append("\", true)\n");
-
-                    // TODO: check protected
-                    // TODO: check array type
-
-                    indent(output);
-                    output.append("local object = pop()\n");
-                    indent(output);
-                    output.append("push(object[field])\n");
-
-                    SETPC
-                OPCONDITIONAL(0xb5) // putfield
-                    GETAUXCONSTINDEX(index);
-
-                    if (index < 1 || index > _class.constant_pool_count) {
-                        std::cerr << "[ERROR]: instruction #" << old_pc << "'s index was out of bounds" << std::endl;
-                        return 1;
-                    }
-                    Constant& constant = _class.constant_pool[index - 1];
-                    if (constant.tag != ConstantType::Fieldref) {
-                        std::cerr << "[ERROR]: expected Fieldref for putfield instruction #" << old_pc << "'s tag but got " << constant_type_names.at(constant.tag) << std::endl;
-                        return 1;
-                    }
-
-                    indent(output);
-                    output.append("local field = classloader.lookupField(\"");
-                    output.insert(output.end(), constant.GeneralRef._class->Class.name->Utf8.bytes, constant.GeneralRef._class->Class.name->Utf8.bytes + constant.GeneralRef._class->Class.name->Utf8.bytes_size);
-
-                    output.append("\", \"");
-                    output.insert(output.end(), constant.GeneralRef.name_and_type->NameAndType.name->Utf8.bytes, constant.GeneralRef.name_and_type->NameAndType.name->Utf8.bytes + constant.GeneralRef.name_and_type->NameAndType.name->Utf8.bytes_size);
-                    output.append("\", \"");
-                    output.insert(output.end(), constant.GeneralRef.name_and_type->NameAndType.descriptor->Utf8.bytes, constant.GeneralRef.name_and_type->NameAndType.descriptor->Utf8.bytes + constant.GeneralRef.name_and_type->NameAndType.descriptor->Utf8.bytes_size);
-                    output.append("\", true)\n");
-
-                    indent(output);
-                    output.append("local value = pop()\n");
-                    indent(output);
-                    output.append("local object = pop()\n");
-                    indent(output);
-                    output.append("object[field] = value\n");
-
-                    SETPC
-                OPCONDITIONAL(0xb6) // invokevirtual
-                    GETAUXCONSTINDEX(index)
-
-                    if (index < 1 || index > _class.constant_pool_count) {
-                        std::cerr << "[ERROR]: instruction #" << old_pc << "'s index was out of bounds" << std::endl;
-                        return 1;
-                    }
-                    Constant& constant = _class.constant_pool[index - 1];
-                    // TODO: InterfaceMethodref
-                    if (constant.tag != ConstantType::Methodref) {
-                        std::cerr << "[ERROR]: expected Methodref for invokevirtual instruction #" << old_pc << "'s tag but got " << constant_type_names.at(constant.tag) << std::endl;
-                        return 1;
-                    }
-
-                    // TODO: handle protected flag
-                    // TODO: signature polymorphic methods (see 2.9)
-
-                    indent(output);
-                    output.append("local methodtype = \"");
-                    output.insert(output.end(), constant.GeneralRef.name_and_type->NameAndType.descriptor->Utf8.bytes, constant.GeneralRef.name_and_type->NameAndType.descriptor->Utf8.bytes + constant.GeneralRef.name_and_type->NameAndType.descriptor->Utf8.bytes_size);
-                    output.append("\"\n");
-
-                    indent(output);
-                    output.append("local descriptor = descriptor_parser.parseMethodDescriptor(methodtype)\n");
-                    indent(output);
-                    output.append("local parameter_count = descriptor.parameter_count\n");
-
-                    indent(output);
-                    output.append("local method, methodclass = classloader.lookupMethod(\"");
-                    output.insert(output.end(), constant.GeneralRef._class->Class.name->Utf8.bytes, constant.GeneralRef._class->Class.name->Utf8.bytes + constant.GeneralRef._class->Class.name->Utf8.bytes_size);
-
-                    output.append("\", \"");
-                    output.insert(output.end(), constant.GeneralRef.name_and_type->NameAndType.name->Utf8.bytes, constant.GeneralRef.name_and_type->NameAndType.name->Utf8.bytes + constant.GeneralRef.name_and_type->NameAndType.name->Utf8.bytes_size);
-                    output.append("\", methodtype, true)\n");
-
-                    indent(output);
-                    output.append("local object = stack[#stack - parameter_count]\n");
-
-                    // TODO: check if object is a valid instance?
-
-                    indent(output);
-                    output.append("local methodoverride, methodclassoverride\n");
-                    indent(output);
-                    output.append("pcall(function()\n");
-                    addIndent();
-
-                    indent(output);
-                    output.append("methodoverride, methodclassoverride = classloader.lookupMethod(object.class.name, \"");
-                    output.insert(output.end(), constant.GeneralRef.name_and_type->NameAndType.name->Utf8.bytes, constant.GeneralRef.name_and_type->NameAndType.name->Utf8.bytes + constant.GeneralRef.name_and_type->NameAndType.name->Utf8.bytes_size);
-                    output.append("\", methodtype, true)\n");
-
-                    subIndent();
-                    indent(output);
-                    output.append("end)\n");
-
-                    indent(output);
-                    output.append("if methodoverride then\n");
-                    addIndent();
-
-                    indent(output);
-                    output.append("method, methodclass = methodoverride, methodclassoverride\n");
-                    subIndent();
-
-                    indent(output);
-                    output.append("end\n");
-
-                    indent(output);
-                    output.append("for i = parameter_count, 1, -1 do\n");
-                    addIndent();
-
-                    indent(output);
-                    output.append("argarrayscratch[i] = pop()\n");
-
-                    subIndent();
-                    indent(output);
-                    output.append("end\n");
-
-                    indent(output);
-                    output.append("local results = table.pack(method(object, table.unpack(argarrayscratch, 1, parameter_count)))\n");
-
-                    indent(output);
-                    output.append("table.clear(argarrayscratch)\n");
-
-                    indent(output);
-                    output.append("for i = 1, results.n do\n");
-                    addIndent();
-
-                    indent(output);
-                    output.append("push(results[i])\n");
-
-                    subIndent();
-                    indent(output);
-                    output.append("end\n");
-
-                    SETPC
-                OPCONDITIONAL(0xb7) // invokespecial
-                    GETAUXCONSTINDEX(index)
-
-                    if (index < 1 || index > _class.constant_pool_count) {
-                        std::cerr << "[ERROR]: instruction #" << old_pc << "'s index was out of bounds" << std::endl;
-                        return 1;
-                    }
-                    Constant& constant = _class.constant_pool[index - 1];
-                    // TODO: InterfaceMethodref
-                    if (constant.tag != ConstantType::Methodref) {
-                        std::cerr << "[ERROR]: expected Methodref for invokespecial instruction #" << old_pc << "'s tag but got " << constant_type_names.at(constant.tag) << std::endl;
-                        return 1;
-                    }
-
-                    indent(output);
-                    output.append("local methodtype = \"");
-                    output.insert(output.end(), constant.GeneralRef.name_and_type->NameAndType.descriptor->Utf8.bytes, constant.GeneralRef.name_and_type->NameAndType.descriptor->Utf8.bytes + constant.GeneralRef.name_and_type->NameAndType.descriptor->Utf8.bytes_size);
-                    output.append("\"\n");
-
-                    indent(output);
-                    output.append("local descriptor = descriptor_parser.parseMethodDescriptor(methodtype)\n");
-                    indent(output);
-                    output.append("local parameter_count = descriptor.parameter_count\n");
-
-                    indent(output);
-                    output.append("local method = classloader.lookupMethodSpecial(\"")
-                        .append(class_name)
-                        .append("\", \"");
-                    output.insert(output.end(), constant.GeneralRef._class->Class.name->Utf8.bytes, constant.GeneralRef._class->Class.name->Utf8.bytes + constant.GeneralRef._class->Class.name->Utf8.bytes_size);
-                    output.append("\", \"");
-                    output.insert(output.end(), constant.GeneralRef.name_and_type->NameAndType.name->Utf8.bytes, constant.GeneralRef.name_and_type->NameAndType.name->Utf8.bytes + constant.GeneralRef.name_and_type->NameAndType.name->Utf8.bytes_size);
-                    output.append("\", methodtype, true)\n");
-
-indent(output);
-                    output.append("local object = stack[#stack - parameter_count]\n");
-
-                    // TODO: check if object is a valid instance?
-
-                    indent(output);
-                    output.append("for i = parameter_count, 1, -1 do\n");
-                    addIndent();
-
-                    indent(output);
-                    output.append("argarrayscratch[i] = pop()\n");
-
-                    subIndent();
-                    indent(output);
-                    output.append("end\n");
-
-                    indent(output);
-                    output.append("local results = table.pack(method(object, table.unpack(argarrayscratch, 1, parameter_count)))\n");
-
-                    indent(output);
-                    output.append("table.clear(argarrayscratch)\n");
-
-                    indent(output);
-                    output.append("for i = 1, results.n do\n");
-                    addIndent();
-
-                    indent(output);
-                    output.append("push(results[i])\n");
-
-                    subIndent();
-                    indent(output);
-                    output.append("end\n");
-
-                    SETPC
-                OPCONDITIONAL(0xbb) // new
-                    GETAUXCONSTINDEX(index)
-
-                    if (index < 1 || index > _class.constant_pool_count) {
-                        std::cerr << "[ERROR]: instruction #" << old_pc << "'s index was out of bounds" << std::endl;
-                        return 1;
-                    }
-                    Constant& constant = _class.constant_pool[index - 1];
-                    if (constant.tag != ConstantType::Class) {
-                        std::cerr << "[ERROR]: expected Class for new instruction #" << old_pc << "'s tag but got " << constant_type_names.at(constant.tag) << std::endl;
-                        return 1;
-                    }
-
-                    indent(output);
-                    output.append("push(classloader.newObjectFromClassName(\"");
-                    output.insert(output.end(), constant.Class.name->Utf8.bytes, constant.Class.name->Utf8.bytes + constant.Class.name->Utf8.bytes_size);
-                    output.append("\"))\n");
-
-                    SETPC
-
-                CLOSEOPCONDITIONAL()
-                default:
-                    std::cerr << "[WARNING]: unhandled operand " << int(code) << std::endl;
-                    break;
+                #undef CLOSEOPCONDITIONAL
+                #undef OPCONDITIONAL
+                #undef SETPC
+                #undef GETAUX
+                #undef GETAUXCONSTINDEX
             }
 
-            #undef CLOSEOPCONDITIONAL
-            #undef OPCONDITIONAL
-            #undef SETPC
-            #undef GETAUX
-            #undef GETAUXCONSTINDEX
+            subIndent();
+            indent(output);
+            output.append("end\n");
         }
 
         subIndent();
         indent(output);
-        output.append("end\n");
+        output.append("end,\n");
 
         subIndent();
-
         indent(output);
-        output.append("end,\n");
+        output.append("},\n");
     }
 
     subIndent();
@@ -646,11 +786,6 @@ indent(output);
     output.append("},\n");
     subIndent();
     indent(output);
-    // output.append("}\nEXPORTS[\"")
-    //     .append(class_name)
-    //     .append("\"] = class_")
-    //     .append(std::to_string(class_name_index))
-    //     .append("\nclassloader.registerClass(\"")
     output.append("}\nclassloader.registerClass(\"")
         .append(class_name)
         .append("\", class_")
@@ -680,12 +815,9 @@ int generateLuau(Class& _class, std::string& output) {
 
     output.append("]]\n");
 
-    // output.append("local EXPORTS = {}\n");
-
     if (outputClass(_class, output))
         return 1;
 
-    // output.append("return EXPORTS");
     if (!output.empty())
         output.erase(output.size() - 1, 1);
     return 0;

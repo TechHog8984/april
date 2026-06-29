@@ -358,6 +358,7 @@ int readClassFile(std::ifstream& classfile, Class &_class) {
                 SIMPLESTRINGATOMLIST
                 #undef X
                 BRANCH("<init>", kInstanceInitialization)
+                BRANCH("<clinit>", kClassInitialization)
                 #undef BRANCH
                 break;
             default:
@@ -543,18 +544,6 @@ int readClassFile(std::ifstream& classfile, Class &_class) {
     _class.field_count = readu2(classfile);
     std::cout << "field count: " << _class.field_count << std::endl;
 
-    enum FieldAccessFlags: int16_t {
-        FIELD_ACC_PUBLIC = 0x0001,
-        FIELD_ACC_PRIVATE = 0x0002,
-        FIELD_ACC_PROTECTED = 0x0004,
-        FIELD_ACC_STATIC = 0x0008,
-        FIELD_ACC_FINAL = 0x0010,
-        FIELD_ACC_VOLATILE = 0x0040,
-        FIELD_ACC_TRANSIENT = 0x0080,
-        FIELD_ACC_SYNTHETIC = 0x1000,
-        FIELD_ACC_ENUM = 0x4000
-    };
-
     _class.field_list = new Field[_class.field_count];
     std::memset(_class.field_list, 0, sizeof(Field) * _class.field_count);
     for (uint16_t i = 0; i < _class.field_count; i++) {
@@ -640,21 +629,6 @@ int readClassFile(std::ifstream& classfile, Class &_class) {
 
     _class.method_count = readu2(classfile);
     std::cout << "method count: " << _class.method_count << std::endl;
-
-    enum MethodAccessFlags: int16_t {
-        METHOD_ACC_PUBLIC = 0x0001,
-        METHOD_ACC_PRIVATE = 0x0002,
-        METHOD_ACC_PROTECTED = 0x0004,
-        METHOD_ACC_STATIC = 0x0008,
-        METHOD_ACC_FINAL = 0x0010,
-        METHOD_ACC_SYNCHRONIZED = 0x0020,
-        METHOD_ACC_BRIDGE = 0x0040,
-        METHOD_ACC_VARARGS = 0x0080,
-        METHOD_ACC_NATIVE = 0x0100,
-        METHOD_ACC_ABSTRACT = 0x0400,
-        METHOD_ACC_STRICT = 0x0800,
-        METHOD_ACC_SYNTHETIC = 0x1000,
-    };
 
     _class.method_list = new Method[_class.method_count];
     std::memset(_class.method_list, 0, sizeof(Method) * _class.method_count);

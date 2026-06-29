@@ -184,7 +184,8 @@ enum StringAtom: uint8_t {
     #define X(name) Atom_##name,
     SIMPLESTRINGATOMLIST
     #undef X
-    Atom_kInstanceInitialization
+    Atom_kInstanceInitialization,
+    Atom_kClassInitialization,
 };
 
 enum ClassAccessFlags: int16_t {
@@ -196,6 +197,31 @@ enum ClassAccessFlags: int16_t {
     CLASS_ACC_SYNTHETIC = 0x1000,
     CLASS_ACC_ANNOTATION = 0x2000,
     CLASS_ACC_ENUM = 0x4000,
+};
+enum FieldAccessFlags: int16_t {
+    FIELD_ACC_PUBLIC = 0x0001,
+    FIELD_ACC_PRIVATE = 0x0002,
+    FIELD_ACC_PROTECTED = 0x0004,
+    FIELD_ACC_STATIC = 0x0008,
+    FIELD_ACC_FINAL = 0x0010,
+    FIELD_ACC_VOLATILE = 0x0040,
+    FIELD_ACC_TRANSIENT = 0x0080,
+    FIELD_ACC_SYNTHETIC = 0x1000,
+    FIELD_ACC_ENUM = 0x4000
+};
+enum MethodAccessFlags: int16_t {
+    METHOD_ACC_PUBLIC = 0x0001,
+    METHOD_ACC_PRIVATE = 0x0002,
+    METHOD_ACC_PROTECTED = 0x0004,
+    METHOD_ACC_STATIC = 0x0008,
+    METHOD_ACC_FINAL = 0x0010,
+    METHOD_ACC_SYNCHRONIZED = 0x0020,
+    METHOD_ACC_BRIDGE = 0x0040,
+    METHOD_ACC_VARARGS = 0x0080,
+    METHOD_ACC_NATIVE = 0x0100,
+    METHOD_ACC_ABSTRACT = 0x0400,
+    METHOD_ACC_STRICT = 0x0800,
+    METHOD_ACC_SYNTHETIC = 0x1000,
 };
 
 struct Class {

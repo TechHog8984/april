@@ -26,7 +26,7 @@ function classloader.loadClass(class)
 
     local clinit = class.methods["<clinit>-()V"]
     if clinit then
-        clinit()
+        clinit.func()
     end
 
     return class
@@ -250,7 +250,7 @@ function classloader.newObject(class, static)
 
     local init = class.methods["<init>-()V"]
     if init then
-        init(object)
+        init.func(object)
     end
 
     return object

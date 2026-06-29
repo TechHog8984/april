@@ -31,5 +31,9 @@ class a {
 
     Chihuahua a = new Chihuahua("Dave");
     a.bark();
+
+    System.out.println(nativeTest());
   }
+
+  private static native double nativeTest();
 }
