@@ -56,6 +56,13 @@ struct FloatValue {
 std::string doubleTostring(DoubleValue& value);
 std::string floatTostring(FloatValue& value);
 
+struct Utf8 {
+    int8_t atom;
+    uint16_t bytes_size;
+    uint8_t* bytes;
+};
+std::string utf8Tostring(Utf8& utf8);
+
 struct Constant {
     ConstantType tag;
     union {
@@ -95,11 +102,7 @@ struct Constant {
             uint16_t descriptor_index; Constant* descriptor;
         } NameAndType;
 
-        struct {
-            int8_t atom;
-            uint16_t bytes_size;
-            uint8_t* bytes;
-        } Utf8;
+        struct Utf8 Utf8;
     };
 };
 
@@ -119,6 +122,10 @@ struct Attribute {
     uint32_t length;
     union {
         struct {
+            uint16_t value_index; Constant* value;
+        } ConstantValue;
+
+        struct {
             uint16_t max_stack;
             uint16_t max_locals;
             uint32_t code_count;
@@ -128,6 +135,15 @@ struct Attribute {
             uint16_t attribute_count;
             Attribute* attribute_list;
         } Code;
+
+        struct {
+            uint16_t exception_count;
+            Constant** exception_list;
+        } Exceptions;
+
+        struct {
+            uint16_t signature_index; Constant* signature;
+        } Signature;
 
         struct {
             uint16_t sourcefile_index; Constant* sourcefile;
@@ -249,6 +265,6 @@ struct Class {
     Attribute* attribute_list;
 };
 
-int readClassFile(std::ifstream& classfile, Class& _class);
+int readClassFile(std::istream& classfile, Class& _class);
 void destroyClass(Class& _class);
 

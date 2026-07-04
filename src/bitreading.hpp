@@ -1,7 +1,7 @@
 #pragma once
 
 #include <cstdint>
-#include <fstream>
+#include <istream>
 
 inline uint16_t swap16(uint16_t v) {
     return (v >> 8u) | (v << 8u);
@@ -13,19 +13,19 @@ inline uint32_t swap32(uint32_t v) {
            ((v & 0xFF000000u) >> 24);
 }
 
-inline uint8_t readu1(std::ifstream& stream) {
+inline uint8_t readu1(std::istream& stream) {
     uint8_t result;
     stream.read(reinterpret_cast<char*>(&result), 1);
     return result;
 }
-inline uint16_t readu2(std::ifstream& stream) {
+inline uint16_t readu2(std::istream& stream) {
     uint16_t result;
     stream.read(reinterpret_cast<char*>(&result), 2);
     if constexpr (std::endian::native == std::endian::little)
         result = swap16(result);
     return result;
 }
-inline uint32_t readu4(std::ifstream& stream) {
+inline uint32_t readu4(std::istream& stream) {
     uint32_t result;
     stream.read(reinterpret_cast<char*>(&result), 4);
     if constexpr (std::endian::native == std::endian::little)

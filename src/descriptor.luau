@@ -124,7 +124,7 @@ local function _readFieldDescriptor(reader: Reader): FieldDescriptor?
                 base_type = BASE_TYPE_NAME_MAP[char]
             },
             size = BASE_TYPE_SIZE_MAP[char],
-            raw = string.sub(reader.data, start, reader.offset)
+            raw = string.sub(reader.data, start, reader.offset - 1)
         }
     elseif char == 'L' then
         local class_name = ""
@@ -135,6 +135,11 @@ local function _readFieldDescriptor(reader: Reader): FieldDescriptor?
             end
             class_name ..= char
         end
+        -- FIXME: i have no idea why this fixes things...
+        local offset = reader.offset
+        if offset ~= reader.length then
+            offset -= 1
+        end
         return {
             tag = "FieldDescriptor",
             value = {
@@ -142,7 +147,7 @@ local function _readFieldDescriptor(reader: Reader): FieldDescriptor?
                 name = class_name
             },
             size = 1,
-            raw = string.sub(reader.data, start, reader.offset)
+            raw = string.sub(reader.data, start, offset)
         }
     elseif char == '[' then
         local array_type = assert(_readFieldDescriptor(reader), "failed to read sub field descriptor in array")
@@ -153,7 +158,7 @@ local function _readFieldDescriptor(reader: Reader): FieldDescriptor?
                 array_type = array_type
             },
             size = 1 + array_type.size,
-            raw = string.sub(reader.data, start, reader.offset)
+            raw = string.sub(reader.data, start, reader.offset - 1)
         }
     end
 

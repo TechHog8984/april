@@ -34,7 +34,11 @@ std::string floatTostring(FloatValue& value) {
     return "err";
 }
 
-int readAttributeList(std::ifstream& classfile, uint16_t& attribute_count, Attribute*& attribute_list, uint16_t constant_pool_count, Constant* constant_pool, Attribute* parent_attribute) {
+std::string utf8Tostring(Utf8& utf8) {
+    return std::string(reinterpret_cast<const char*>(utf8.bytes), utf8.bytes_size);
+}
+
+int readAttributeList(std::istream& classfile, uint16_t& attribute_count, Attribute*& attribute_list, uint16_t constant_pool_count, Constant* constant_pool, Attribute* parent_attribute) {
     // TODO: formatting trailing spaces need to adjust for when calling this inside a Code attribute (attribute lists can be nested, so we need to have a dynamic number of spaces)
 
     attribute_count = readu2(classfile);
@@ -58,13 +62,31 @@ int readAttributeList(std::ifstream& classfile, uint16_t& attribute_count, Attri
             return 1;
         }
 
-        std::cout << "        name: " << attribute.name->Utf8.bytes << std::endl;
+        std::cout << "        name: " << utf8Tostring(attribute.name->Utf8) << std::endl;
 
         attribute.length = readu4(classfile);
         std::cout << "        length: " << attribute.length << std::endl;
 
         std::streampos startpos = classfile.tellg();
         switch (attribute.name->Utf8.atom) {
+            case Atom_ConstantValue:
+                attribute.ConstantValue.value_index = readu2(classfile);
+                if (attribute.ConstantValue.value_index < 1 || attribute.ConstantValue.value_index > constant_pool_count) {
+                    std::cerr << "[ERROR]: attribute #" << j << "'s value index was out of bounds" << std::endl;
+                    return 1;
+                }
+                attribute.ConstantValue.value = &constant_pool[attribute.ConstantValue.value_index - 1];
+                switch (attribute.ConstantValue.value->tag) {
+                    case ConstantType::Long:
+                        std::cout << "          long value: " << attribute.ConstantValue.value->Long.bytes << std::endl;
+                        break;
+                    default:
+                        std::cerr << "[ERROR]: expected Long, Float, Double, Int, Short, Char, Byte, Boolean, or String for attribute #" << j << "'s value tag but got " << constant_type_names.at(attribute.ConstantValue.value->tag) << std::endl;
+                        return 1;
+                        break;
+                }
+
+                break;
             case Atom_Code:
                 attribute.Code.max_stack = readu2(classfile);
                 std::cout << "          max_stack: " << attribute.Code.max_stack << std::endl;
@@ -86,7 +108,7 @@ int readAttributeList(std::ifstream& classfile, uint16_t& attribute_count, Attri
                 attribute.Code.exception_count = readu2(classfile);
                 std::cout << "          exception_count: " << attribute.Code.exception_count << std::endl;
                 attribute.Code.exception_list = new Exception[attribute.Code.exception_count];
-                std::memset(attribute.Code.exception_list, 0, sizeof(uint8_t) * attribute.Code.exception_count);
+                std::memset(attribute.Code.exception_list, 0, sizeof(Exception) * attribute.Code.exception_count);
 
                 for (uint16_t j = 0; j < attribute.Code.exception_count; j++) {
                     Exception& exception = attribute.Code.exception_list[j];
@@ -134,6 +156,8 @@ int readAttributeList(std::ifstream& classfile, uint16_t& attribute_count, Attri
                             std::cerr << "[ERROR]: expected Class for exception #" << j << "'s catch_type tag but got " << constant_type_names.at(exception.catch_type->tag) << std::endl;
                             return 1;
                         }
+
+                        std::cout << "              catch_type: " << utf8Tostring(exception.catch_type->Class.name->Utf8) << std::endl;
                     }
                 }
 
@@ -141,6 +165,53 @@ int readAttributeList(std::ifstream& classfile, uint16_t& attribute_count, Attri
                 if (readAttributeList(classfile, attribute.Code.attribute_count, attribute.Code.attribute_list, constant_pool_count, constant_pool, &attribute))
                     return 1;
                 std::cout << "          done reading code attributes" << std::endl;
+                break;
+            case Atom_StackMapTable:
+                classfile.ignore(attribute.length);
+                break;
+            case Atom_Exceptions:
+                attribute.Exceptions.exception_count = readu2(classfile);
+                std::cout << "          exception_count: " << attribute.Exceptions.exception_count << std::endl;
+                attribute.Exceptions.exception_list = new Constant*[attribute.Exceptions.exception_count];
+                std::memset(attribute.Exceptions.exception_list, 0, sizeof(Constant*) * attribute.Exceptions.exception_count);
+
+                for (uint16_t j = 0; j < attribute.Exceptions.exception_count; j++) {
+                    Constant*& exception = attribute.Exceptions.exception_list[j];
+
+                    std::cout << "            exception #" << j << std::endl;
+
+                    uint16_t index = readu2(classfile);
+
+                    if (index < 1 || index > constant_pool_count) {
+                        std::cerr << "[ERROR]: exception #" << j << "'s catch type index was out of bounds" << std::endl;
+                        return 1;
+                    }
+                    exception = &constant_pool[index - 1];
+                    if (exception->tag != ConstantType::Class) {
+                        std::cerr << "[ERROR]: expected Class for exception #" << j << "'s catch_type tag but got " << constant_type_names.at(exception->tag) << std::endl;
+                        return 1;
+                    }
+
+                    std::cout << "              class: " << utf8Tostring(exception->Class.name->Utf8) << std::endl;
+                }
+                break;
+            case Atom_InnerClasses:
+                classfile.ignore(attribute.length);
+                break;
+            case Atom_Signature:
+                attribute.Signature.signature_index = readu2(classfile);
+                if (attribute.Signature.signature_index < 1 || attribute.Signature.signature_index > constant_pool_count) {
+                    std::cerr << "[ERROR]: attribute #" << j << "'s sourcefile index was out of bounds" << std::endl;
+                    return 1;
+                }
+                attribute.Signature.signature = &constant_pool[attribute.Signature.signature_index - 1];
+                if (attribute.Signature.signature->tag != ConstantType::Utf8) {
+                    std::cerr << "[ERROR]: expected Utf8 for attribute #" << j << "'s sourcefile tag but got " << constant_type_names.at(attribute.Signature.signature->tag) << std::endl;
+                    return 1;
+                }
+
+                std::cout << "          signature: " << utf8Tostring(attribute.Signature.signature->Utf8) << std::endl;
+
                 break;
             case Atom_SourceFile:
                 attribute.SourceFile.sourcefile_index = readu2(classfile);
@@ -154,7 +225,7 @@ int readAttributeList(std::ifstream& classfile, uint16_t& attribute_count, Attri
                     return 1;
                 }
 
-                std::cout << "          sourcefile: " << attribute.SourceFile.sourcefile->Utf8.bytes << std::endl;
+                std::cout << "          sourcefile: " << utf8Tostring(attribute.SourceFile.sourcefile->Utf8) << std::endl;
 
                 break;
             case Atom_LineNumberTable:
@@ -181,12 +252,16 @@ int readAttributeList(std::ifstream& classfile, uint16_t& attribute_count, Attri
                     }
 
                     line_number.line_number = readu2(classfile);
-
                     std::cout << "              line_number: " << line_number.line_number << std::endl;
                 }
                 break;
+            case Atom_Deprecated:
+                break;
+            case Atom_RuntimeVisibleAnnotations:
+                classfile.ignore(attribute.length);
+                break;
             default:
-                std::cerr << "[ERROR]: attribute #" << j << " had an invalid name (" << attribute.name->Utf8.bytes << ')' << std::endl;
+                std::cerr << "[ERROR]: attribute #" << j << " had an invalid name (" << utf8Tostring(attribute.name->Utf8) << ')' << std::endl;
                 return 1;
                 break;
         }
@@ -225,7 +300,7 @@ void deleteAttribute(Attribute& attribute) {
     }
 }
 
-int readClassFile(std::ifstream& classfile, Class &_class) {
+int readClassFile(std::istream& classfile, Class &_class) {
     uint32_t magic = readu4(classfile);
     if (magic != 0xCAFEBABE) {
         std::cerr << "[ERROR]: invalid magic item; expected 0xCAFEBABE but got " << std::format("{:#X}", magic) << std::endl;
@@ -348,7 +423,7 @@ int readClassFile(std::ifstream& classfile, Class &_class) {
                 for (uint16_t i = 0; i < constant.Utf8.bytes_size; i++)
                     std::cout << std::format("{:x}", constant.Utf8.bytes[i]) << ", ";
                 std::cout << ']' << std::endl;
-                std::cout << "    bytes (lazy conversion) = " << constant.Utf8.bytes << std::endl;
+                std::cout << "    bytes (lazy conversion) = " << utf8Tostring(constant.Utf8) << std::endl;
                 constant.Utf8.atom = -1;
                 #define BRANCH(str, value) else if (std::strncmp(reinterpret_cast<const char*>(constant.Utf8.bytes), str, constant.Utf8.bytes_size) == 0) \
                     constant.Utf8.atom = Atom_##value;
@@ -506,7 +581,7 @@ int readClassFile(std::ifstream& classfile, Class &_class) {
         return 1;
     }
 
-    std::cout << "this class name: " <<  _class.this_class->Class.name->Utf8.bytes << std::endl;
+    std::cout << "this class name: " <<  utf8Tostring(_class.this_class->Class.name->Utf8) << std::endl;
 
     if (super_class_index) {
         if (super_class_index < 1 || super_class_index > _class.constant_pool_count) {
@@ -519,7 +594,7 @@ int readClassFile(std::ifstream& classfile, Class &_class) {
             return 1;
         }
 
-        std::cout << "super class name: " << _class.super_class->Class.name->Utf8.bytes << std::endl;
+        std::cout << "super class name: " << utf8Tostring(_class.super_class->Class.name->Utf8) << std::endl;
     } else
         std::cout << "super class name: [no super class]" << std::endl;
 
@@ -607,7 +682,7 @@ int readClassFile(std::ifstream& classfile, Class &_class) {
             return 1;
         }
 
-        std::cout << "    name: " << field.name->Utf8.bytes << std::endl;
+        std::cout << "    name: " << utf8Tostring(field.name->Utf8) << std::endl;
 
         field.descriptor_index = readu2(classfile);
         std::cout << "    descriptor_index: " << field.descriptor_index << std::endl;
@@ -621,7 +696,7 @@ int readClassFile(std::ifstream& classfile, Class &_class) {
             return 1;
         }
 
-        std::cout << "    descriptor: " << field.descriptor->Utf8.bytes << std::endl;
+        std::cout << "    descriptor: " << utf8Tostring(field.descriptor->Utf8) << std::endl;
 
         if (readAttributeList(classfile, field.attribute_count, field.attribute_list, _class.constant_pool_count, _class.constant_pool, nullptr))
             return 1;
@@ -650,6 +725,8 @@ int readClassFile(std::ifstream& classfile, Class &_class) {
             std::cerr << "[ERROR]: expected Utf8 for method #" << i << "'s name tag but got " << constant_type_names.at(method.name->tag) << std::endl;
             return 1;
         }
+
+        std::cout << "    name: " << utf8Tostring(method.name->Utf8) << std::endl;
 
         std::cout << "    access_flags: " << method.access_flags << " (";
 
@@ -707,9 +784,9 @@ int readClassFile(std::ifstream& classfile, Class &_class) {
             return 1;
         }
 
-        if (method.access_flags & METHOD_ACC_PROTECTED) {
+        if (method.access_flags & METHOD_ACC_ABSTRACT) {
             if (method.access_flags & METHOD_ACC_PRIVATE || method.access_flags & METHOD_ACC_STRICT || method.access_flags & METHOD_ACC_FINAL || method.access_flags & METHOD_ACC_SYNCHRONIZED || method.access_flags & METHOD_ACC_NATIVE || method.access_flags & METHOD_ACC_STRICT) {
-                std::cerr << "[ERROR]: method #" << i << " has invalid access flags: the method had PROTECTED flag but also had either PRIVATE, STRICT, FINAL, SYNCHRONIZED, NATIVE, or STRICT flag" << std::endl;
+                std::cerr << "[ERROR]: method #" << i << " has invalid access flags: the method had ABSTRACT flag but also had either PRIVATE, STRICT, FINAL, SYNCHRONIZED, NATIVE, or STRICT flag" << std::endl;
                 return 1;
             }
         }
@@ -720,8 +797,6 @@ int readClassFile(std::ifstream& classfile, Class &_class) {
                 return 1;
             }
         }
-
-        std::cout << "    name: " << method.name->Utf8.bytes << std::endl;
 
         method.descriptor_index = readu2(classfile);
         if (method.descriptor_index < 1 || method.descriptor_index > _class.constant_pool_count) {
@@ -734,7 +809,7 @@ int readClassFile(std::ifstream& classfile, Class &_class) {
             return 1;
         }
 
-        std::cout << "    descriptor: " << method.descriptor->Utf8.bytes << std::endl;
+        std::cout << "    descriptor: " << utf8Tostring(method.descriptor->Utf8) << std::endl;
 
         if (readAttributeList(classfile, method.attribute_count, method.attribute_list, _class.constant_pool_count, _class.constant_pool, nullptr))
             return 1;
