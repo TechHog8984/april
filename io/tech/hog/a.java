@@ -185,6 +185,9 @@ class a {
     for (int i = 0; i < doublecarray.length; i++)
       System.out.println(new String(doublecarray[i]));
 
+    System.out.println("ldc with Class:");
+    System.out.println(a.class);
+
     System.out.println("long comparison:");
     // dmul, d2l, lcmp, ifeq, goto
     System.out.println(nativeTest2() != 5L);
@@ -266,7 +269,7 @@ class a {
     int value3 = 310;
     // ldc2_w lstore_3
     long value4 = 410L;
-    // iadd, lsub, iload_0, iload-1, iload_2, i2l, lload_3
+    // iadd, lsub, iload_0, iload_1, iload_2, i2l, lload_3
     System.out.println(value1 + value2 + value3 - value4);
   }
 

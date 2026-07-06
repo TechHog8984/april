@@ -2,7 +2,7 @@
 
 #include <cstdint>
 #include <cstring>
-#include <fstream>
+#include <string>
 #include <unordered_map>
 
 enum class ConstantType: uint8_t {
@@ -63,6 +63,7 @@ struct Utf8 {
 };
 std::string utf8Tostring(Utf8& utf8);
 
+struct BootstrapMethod;
 struct Constant {
     ConstantType tag;
     union {
@@ -89,6 +90,8 @@ struct Constant {
         } Float;
 
         struct {
+            uint32_t high;
+            uint32_t low;
             uint64_t bytes;
         } Long;
 
@@ -103,6 +106,20 @@ struct Constant {
         } NameAndType;
 
         struct Utf8 Utf8;
+
+        struct {
+            uint8_t reference_kind;
+            uint16_t reference_index; Constant* reference;
+        } MethodHandle;
+
+        struct {
+            uint16_t descriptor_index; Constant* descriptor;
+        } MethodType;
+
+        struct {
+            uint16_t bootstrap_method_index; BootstrapMethod* bootstrap_method;
+            uint16_t name_and_type_index; Constant* name_and_type;
+        } InvokeDynamic;
     };
 };
 
@@ -115,6 +132,18 @@ struct Exception {
 struct LineNumber {
     uint16_t start_pc;
     uint16_t line_number;
+};
+struct LocalVariable {
+    uint16_t start_pc;
+    uint16_t end_pc;
+    uint16_t name_index; Constant* name;
+    uint16_t descriptor_index; Constant* descriptor;
+    uint16_t index;
+};
+struct BootstrapMethod {
+    uint16_t method_ref_index; Constant* method_ref;
+    uint16_t arg_count;
+    Constant** arg_list;
 };
 
 struct Attribute {
@@ -142,6 +171,11 @@ struct Attribute {
         } Exceptions;
 
         struct {
+            uint16_t class_index; Constant* _class;
+            uint16_t method_index; Constant* method;
+        } EnclosingMethod;
+
+        struct {
             uint16_t signature_index; Constant* signature;
         } Signature;
 
@@ -153,6 +187,16 @@ struct Attribute {
             uint16_t count;
             LineNumber* list;
         } LineNumberTable;
+
+        struct {
+            uint16_t count;
+            LocalVariable* list;
+        } LocalVariableTable;
+
+        struct {
+            uint16_t bootstrap_method_count;
+            BootstrapMethod* bootstrap_method_list;
+        } BootstrapMethods;
     };
 };
 

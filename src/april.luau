@@ -4,7 +4,9 @@ local descriptor_parser = require("@april/descriptor")
 
 local april = {
     name_to_class_map = {},
-    array_class_map = {}
+    array_class_map = {},
+    callstack = {},
+    hooks_newObject = {} :: any
 }
 
 export type JavaByte = {
@@ -14,6 +16,11 @@ export type JavaByte = {
 }
 export type JavaChar = {
     tag: "char",
+    value: number,
+    category1: true
+}
+export type JavaShort = {
+    tag: "short",
     value: number,
     category1: true
 }
@@ -29,7 +36,9 @@ export type JavaFloat = {
 }
 export type JavaLong = {
     tag: "long",
-    value: number, -- TODO: store high and low bytes?
+    value: number,
+    high: number,
+    low: number,
     category1: false
 }
 export type JavaDouble = {
@@ -52,8 +61,13 @@ export type JavaReference = {
     value: any,
     category1: true
 }
+export type JavaReturnAddress = {
+    tag: "returnAddress",
+    value: number,
+    category1: true
+}
 
-export type JavaValue = JavaByte | JavaChar | JavaInteger | JavaFloat | JavaLong | JavaDouble | JavaBoolean | JavaStub | JavaReference
+export type JavaValue = JavaByte | JavaChar | JavaShort | JavaInteger | JavaFloat | JavaLong | JavaDouble | JavaBoolean | JavaStub | JavaReference | JavaReturnAddress
 
 function april.wrapUnsigned(value: number, bits: number)
     local mod = 2 ^ bits
@@ -88,6 +102,15 @@ function april.newChar(value: number): JavaChar
         category1 = true
     }
 end
+function april.newShort(value: number): JavaShort
+    value = april.wrapSigned(math.floor(value), 16)
+
+    return {
+        tag = "short",
+        value = value,
+        category1 = true
+    }
+end
 function april.newInteger(value: number): JavaInteger
     value = april.wrapSigned(math.floor(value), 32)
 
@@ -107,12 +130,25 @@ function april.newFloat(value: number): JavaFloat
         category1 = true
     }
 end
+local long_conversion_buffer = buffer.create(8)
 function april.newLong(value: number): JavaLong
     value = math.floor(value)
+    buffer.writef64(long_conversion_buffer, 0, value)
 
     return {
         tag = "long",
         value = value,
+        high = buffer.readu32(long_conversion_buffer, 0),
+        low = buffer.readu32(long_conversion_buffer, 4),
+        category1 = false
+    }
+end
+function april.newLongFromBits(high: number, low: number): JavaLong
+    return {
+        tag = "long",
+        value = high * (2^32) + low,
+        high = high,
+        low = low,
         category1 = false
     }
 end
@@ -144,26 +180,41 @@ function april.newReference(value: any): JavaReference
         category1 = true
     }
 end
+function april.newReturnAddress(value: number): JavaReturnAddress
+    return {
+        tag = "returnAddress",
+        value = value,
+        category1 = true
+    }
+end
 
 function april.coerce(input: JavaValue, target: descriptor_parser.FieldDescriptor): JavaValue
-    -- print(input, target)
     local targetvalue = target.value
     if targetvalue.tag == "Array" then
-        assert(input.tag == "reference" and input.value.class.isarray, "could not coerce value into array")
-        assert(input.value.class == april.getArrayClass(target.raw))
+        if input.value then
+            assert(input.tag == "reference" and input.value.class.isarray, "could not coerce value into array")
+            local arrayclass = april.getArrayClass(target.raw)
+
+            local inputvalueclass = april.getClassFromDescriptor(input.value.class.valuedescriptor)
+            local arrayvalueclass = april.getClassFromDescriptor(targetvalue.array_type)
+            assert(input.value.class == arrayclass or
+                if arrayvalueclass.isinterface then
+                    april.implementsInterface(inputvalueclass, arrayvalueclass)
+                else
+                    april.hasSuperClass(inputvalueclass,arrayvalueclass))
+        end
         return input
     elseif targetvalue.tag == "Class" then
         assert(input.tag == "reference", "could not coerce value into instance")
         return input
     elseif targetvalue.tag == "Base" then
-        -- TODO: i kept copypasting so go back and ensure consistent tag order for readability
         if targetvalue.base_type == "byte" then
             if input.tag == "byte" then
                 return input
             elseif input.tag == "boolean" then
                 return april.newByte(if input.value then 1 else 0)
             end
-            assert(input.tag == "integer" or input.tag == "float" or input.tag == "long" or input.tag == "double", "could not coerce value into byte")
+            assert(input.tag == "integer" or input.tag == "short" or input.tag == "float" or input.tag == "long" or input.tag == "double", "could not coerce value into byte")
             return april.newByte(input.value)
         elseif targetvalue.base_type == "char" then
             if input.tag == "char" then
@@ -171,7 +222,7 @@ function april.coerce(input: JavaValue, target: descriptor_parser.FieldDescripto
             elseif input.tag == "boolean" then
                 return april.newChar(if input.value then 1 else 0)
             end
-            assert(input.tag == "integer" or input.tag == "float" or input.tag == "long" or input.tag == "double", "could not coerce value into char")
+            assert(input.tag == "integer" or input.tag == "short" or input.tag == "float" or input.tag == "long" or input.tag == "double", "could not coerce value into char")
             return april.newChar(input.value)
         elseif targetvalue.base_type == "double" then
             if input.tag == "double" then
@@ -179,7 +230,7 @@ function april.coerce(input: JavaValue, target: descriptor_parser.FieldDescripto
             elseif input.tag == "boolean" then
                 return april.newDouble(if input.value then 1 else 0)
             end
-            assert(input.tag == "byte" or input.tag == "char" or input.tag == "integer" or input.tag == "float" or input.tag == "long", "could not coerce value into double")
+            assert(input.tag == "byte" or input.tag == "char" or input.tag == "short" or input.tag == "integer" or input.tag == "float" or input.tag == "long", "could not coerce value into double")
             return april.newDouble(input.value)
         elseif targetvalue.base_type == "float" then
             if input.tag == "float" then
@@ -187,7 +238,7 @@ function april.coerce(input: JavaValue, target: descriptor_parser.FieldDescripto
             elseif input.tag == "boolean" then
                 return april.newFloat(if input.value then 1 else 0)
             end
-            assert(input.tag == "byte" or input.tag == "char" or input.tag == "integer" or input.tag == "long" or input.tag == "double", "could not coerce value into float")
+            assert(input.tag == "byte" or input.tag == "char" or input.tag == "short" or input.tag == "integer" or input.tag == "long" or input.tag == "double", "could not coerce value into float")
             return april.newFloat(input.value)
         elseif targetvalue.base_type == "int" then
             if input.tag == "integer" then
@@ -195,7 +246,7 @@ function april.coerce(input: JavaValue, target: descriptor_parser.FieldDescripto
             elseif input.tag == "boolean" then
                 return april.newInteger(if input.value then 1 else 0)
             end
-            assert(input.tag == "byte" or input.tag == "char" or input.tag == "float" or input.tag == "long" or input.tag == "double", "could not coerce value into integer")
+            assert(input.tag == "byte" or input.tag == "char" or input.tag == "short" or input.tag == "float" or input.tag == "long" or input.tag == "double", "could not coerce value into integer")
             return april.newInteger(input.value)
         elseif targetvalue.base_type == "long" then
             if input.tag == "long" then
@@ -203,20 +254,47 @@ function april.coerce(input: JavaValue, target: descriptor_parser.FieldDescripto
             elseif input.tag == "boolean" then
                 return april.newLong(if input.value then 1 else 0)
             end
-            assert(input.tag == "byte" or input.tag == "char" or input.tag == "integer" or input.tag == "float" or input.tag == "double", "could not coerce value into long")
+            assert(input.tag == "byte" or input.tag == "char" or input.tag == "short" or input.tag == "integer" or input.tag == "float" or input.tag == "double", "could not coerce value into long")
             return april.newLong(input.value)
         elseif targetvalue.base_type == "short" then
-            -- TODO: short
+            if input.tag == "short" then
+                return input
+            elseif input.tag == "boolean" then
+                return april.newShort(if input.value then 1 else 0)
+            end
+            assert(input.tag == "byte" or input.tag == "char" or input.tag == "integer" or input.tag == "float" or input.tag == "long" or input.tag == "double", "could not coerce value into short")
+            return april.newShort(input.value)
         elseif targetvalue.base_type == "boolean" then
             if input.tag == "boolean" then
                 return input
             end
-            assert(input.tag == "byte" or input.tag == "char" or input.tag == "integer" or input.tag == "float" or input.tag == "long" or input.tag == "double", "could not coerce value into boolean")
+            assert(input.tag == "byte" or input.tag == "char" or input.tag == "short" or input.tag == "integer" or input.tag == "float" or input.tag == "long" or input.tag == "double", "could not coerce value into boolean")
             return april.newBoolean(if input.value == 0 then false else true)
         end
     end
 
     error("failed to coerce")
+end
+
+function april.intValue(value: JavaValue): number?
+    if value.tag == "integer" or value.tag == "byte" or value.tag == "char" or value.tag == "short" then
+        return value.value
+    elseif value.tag == "boolean" then
+        return if value.value then 1 else 0
+    end
+
+    return nil
+end
+function april.intJavaValue(value: JavaValue): JavaValue?
+    if value.tag == "integer" then
+        return value
+    elseif value.tag == "byte" or value.tag == "char" or value.tag == "short" then
+        return april.newInteger(value.value)
+    elseif value.tag == "boolean" then
+        return april.newInteger(if value.value then 1 else 0)
+    end
+
+    return nil
 end
 
 function april.getDefault(descriptor: descriptor_parser.FieldDescriptor)
@@ -225,7 +303,7 @@ function april.getDefault(descriptor: descriptor_parser.FieldDescriptor)
         if descriptor.value.base_type == "byte" then
             value = april.newByte(0)
         elseif descriptor.value.base_type == "short" then
-            -- TODO: short
+            value = april.newShort(0)
         elseif descriptor.value.base_type == "int" then
             value = april.newInteger(0)
         elseif descriptor.value.base_type == "long" then
@@ -260,17 +338,24 @@ function april.newArray(valuetype, size)
     return object
 end
 
--- TODO: String intern
-function april.newString(value: string): JavaReference
+function april.newStringFromLuaCharArray(array: { number }): JavaReference
+    local count = #array
     local object = april.newObjectFromClassName("java/lang/String")
-    local char_array = april.newArray('C', #value)
-    for i, c: any in value:gmatch("()(.)") do
-        char_array.list[i] = april.newChar(c:byte())
+    local char_array = april.newArray('C', count)
+    for i = 1, count do
+        char_array.list[i] = april.newChar(array[i])
     end
     local init = object.class.methods["<init>-([C)V"]
     local objectref = april.newReference(object)
     init.func(objectref, april.newReference(char_array))
     return objectref
+end
+function april.newString(value: string): JavaReference
+    local array = table.create(#value)
+    for i, c: any in value:gmatch("()(.)") do
+        array[i] = c:byte()
+    end
+    return april.newStringFromLuaCharArray(array)
 end
 
 function april.clone(value: JavaValue): JavaValue
@@ -278,15 +363,18 @@ function april.clone(value: JavaValue): JavaValue
         return april.newByte(value.value)
     elseif value.tag == "char" then
         return april.newChar(value.value)
+    elseif value.tag == "short" then
+        return april.newShort(value.value)
     elseif value.tag == "integer" then
         return april.newInteger(value.value)
     elseif value.tag == "float" then
         return april.newFloat(value.value)
-    -- NOTE: we don't clone category 2 values; dup explicitly does not support them
-    -- elseif value.tag == "long" then
-    --     return JavaValue.newLong(value.value)
-    -- elseif value.tag == "double" then
-    --     return JavaValue.newDouble(value.value)
+    elseif value.tag == "long" then
+        return april.newLongFromBits(value.high, value.low)
+    elseif value.tag == "double" then
+        return april.newDouble(value.value)
+    elseif value.tag == "boolean" then
+        return april.newBoolean(value.value)
     elseif value.tag == "reference" then
         return value
     end
@@ -294,21 +382,55 @@ function april.clone(value: JavaValue): JavaValue
     return error("unhandled tag " .. tostring(value.tag))
 end
 
+local function assignClassObject(class)
+    local classobject = april.newObject(april.getClass("java/lang/Class"))
+    classobject.classclass = class
+    class.classobject = classobject
+end
 
+function april.fetchClass(classname): any
+    error("april.fetchClass should be overriden by your environment")
+end
 function april.findClass(classname)
-    local class = april.name_to_class_map[classname]
+    local cached = april.name_to_class_map[classname]
+    if cached then
+        return cached
+    end
+
+    local class
+    if classname:match("^%[") then
+        class = april.getArrayClass(classname)
+    elseif classname:match("^[ZBCSIJFDV]$") then
+        class = april.getPrimitiveClass(classname)
+    else
+        class = april.fetchClass(classname)
+
+        if not class.classobject then
+            class.classobject = true -- don't recurse indefinitely
+            assignClassObject(class)
+        end
+    end
+    april.name_to_class_map[classname] = class
+
     return class
 end
-function april.getClass(classname)
+
+-- TODO: return type is cast to any because the shitty solver thinks it returns two things somehow
+function april.getClass(classname): any
     local class = april.findClass(classname)
     if not class then
-        if classname:sub(1, 1) == '[' then
-            return (april.getArrayClass(classname))
-        end
-
         error(("failed to find class '%s'"):format(classname))
     end
+
     return class
+end
+function april.getClassFromDescriptor(descriptor: descriptor_parser.FieldDescriptor): any
+    local classname = descriptor.raw
+    if descriptor.value.tag == "Class" then
+        classname = descriptor.value.name
+    end
+
+    return april.getClass(classname)
 end
 function april.loadClass(class)
     if class.hasloaded then
@@ -322,6 +444,7 @@ function april.loadClass(class)
         superclassname = superclass.superclass
     end
 
+    -- FIXME: set field values via ConstantValue attributes if present
     local staticinstance = april.newObject(class, true)
     class.staticinstance = staticinstance
 
@@ -336,10 +459,46 @@ function april.loadClassByName(classname)
     return april.loadClass(april.getClass(classname))
 end
 
+function april.getPrimitiveClass(name)
+    assert(name == "Z"
+        or name == "B"
+        or name == "C"
+        or name == "S"
+        or name == "I"
+        or name == "J"
+        or name == "F"
+        or name == "D"
+        or name == "V")
+
+    local cached = april.name_to_class_map[name]
+    if cached then
+        return cached
+    end
+
+    local class = {
+        name = name,
+        hasloaded = false,
+        isarray = false,
+        isprimitive = true,
+        issuper = true,
+        isinterface = false,
+        fieldcache = {},
+        methodcache = {},
+        fields = {},
+        methods = {}
+    }
+    assignClassObject(class)
+
+    april.name_to_class_map[name] = class
+
+    return class
+end
+
 local function newMonitor(object)
     return {
         thread = nil,
         waiting_threads = {},
+        waiting_threads2 = {},
         count = 0
     }
 end
@@ -354,21 +513,21 @@ function april.newObject(class, static: boolean?): any
     object.monitor = newMonitor(object)
     object.hashcode = tonumber(tostring(object):match("^table: (0x[%d%a]+)$"))
 
-    local superclassname = class.superclass
-    while superclassname do
-        local superclass = april.getClass(superclassname)
+    local classname = class.name
+    while classname do
+        local targetclass = april.getClass(classname)
 
-        for k, v in superclass.fields do
-            object[k] = april.getDefault(descriptor_parser.parseFieldDescriptor(v.type))
+        for k, v in targetclass.fields do
+            if v.isstatic and not static then continue end
+            object[v] = april.getDefault(descriptor_parser.parseFieldDescriptor(v.type))
         end
 
-        superclassname = superclass.superclass
+        classname = targetclass.superclass
     end
 
-    -- local init = class.methods["<init>-()V"]
-    -- if init then
-    --     init.func(object)
-    -- end
+    for _, hook in april.hooks_newObject do
+        hook(object, static)
+    end
 
     return object
 end
@@ -376,12 +535,18 @@ function april.newObjectFromClassName(classname)
     return april.newObject(april.getClass(classname))
 end
 
-function april.registerClass(classname, class)
-    if april.name_to_class_map[classname] then
-        error(("class '%s' has already been registered!"):format(classname))
-    end
+-- function april.registerClass(classname, class)
+--     if april.name_to_class_map[classname] then
+--         error(("class '%s' has already been registered!"):format(classname))
+--     end
 
-    april.name_to_class_map[classname] = class
+--     april.name_to_class_map[classname] = class
+--     local classobject = april.newObject(april.getClass("java/lang/Class"))
+--     rawset(classobject, "classclass", class)
+--     class.classobject = classobject
+-- end
+function april.registerClassMap(map)
+    april.name_to_class_map = map
 end
 
 function april.lookupField(classname: string, fieldname: string, fieldtype: string, usecache: boolean?)
@@ -492,8 +657,7 @@ function april.lookupMethod(classname: string, methodname: string, methodtype: s
 
             local potentialclass = april.getClass(value)
             local potentialmethod = potentialclass.methods[combinedmethodname]
-            -- TODO: check abstract
-            if potentialmethod then
+            if potentialmethod and not potentialmethod.isabstract then
                 method, methodclass = potentialmethod, potentialclass
             end
         end
@@ -521,7 +685,7 @@ function april.lookupMethodSpecial(currentclassname, classname, methodname, meth
     if superclassname then
         local superclass = april.getClass(superclassname)
         local use_super = (methodname ~= "<init>" and methodname ~= "<clinit>") and
-            (not resolvedclass.isinterface) and
+            (if resolvedclass.isinterface then true else april.hasSuperClass(resolvedclass, currentclass)) and
             (superclass.issuper)
         if use_super then
             class = superclass
@@ -594,6 +758,7 @@ function april.getArrayClass(arraytype): (any, descriptor_parser.FieldDescriptor
         name = arraytype,
         hasloaded = false,
         isarray = true,
+        isprimitive = false,
         issuper = true,
         isinterface = false,
         valuedescriptor = descriptor.value.array_type,
@@ -608,13 +773,16 @@ function april.getArrayClass(arraytype): (any, descriptor_parser.FieldDescriptor
         fields = {},
         methods = {}
     }
+    assignClassObject(class)
     april.array_class_map[descriptor] = class
-    april.registerClass(arraytype, class)
+    -- april.registerClass(arraytype, class)
+    april.name_to_class_map[arraytype] = class
 
     return class, descriptor.value
 end
 
-function april.hasSuperClass(class, targetsuperclass)
+-- TODO: shitty solver says 'expected this to be true, but got false' ???
+function april.hasSuperClass(class, targetsuperclass): boolean
     local superclassname = class.superclass
     while superclassname do
         local superclass = april.getClass(superclassname)
@@ -632,10 +800,25 @@ function april.hasSuperClassByName(class, targetsuperclassname)
     return april.hasSuperClass(class, april.getClass(targetsuperclassname))
 end
 function april.hasSuperInterface(class, superinterface)
-    for _, interface in class.interfaces do
-        if interface == superinterface then
+    for _, interfacename in class.interfaces do
+        if interfacename == superinterface.name then
             return true
         end
+    end
+
+    return false
+end
+
+function april.implementsInterface(class, interface)
+    while true do
+        if april.hasSuperInterface(class, interface) then
+            return true
+        end
+        if not class.superclass then
+            return false
+        end
+
+        class = april.getClass(class.superclass)
     end
 
     return false
@@ -676,7 +859,7 @@ function april.instanceofByClassAndTargetClass(class: any, targetclass: any)
         end
     else
         if targetclass.isinterface then
-            return april.hasSuperInterface(class, targetclass)
+            return april.implementsInterface(class, targetclass)
         else
             return targetclass == class or april.hasSuperClass(class, targetclass)
         end
@@ -685,6 +868,32 @@ end
 function april.instanceofByClassAndTargetName(class, targetname)
     return april.instanceofByClassAndTargetClass(class, april.getClass(targetname))
 end
+
+function april.javaStringToLuaString(value)
+    local field = value.class.fields["value"]
+    local arr = value[field].value
+
+    local str = table.create(arr.size)
+
+    for i = 1, arr.size do
+        str[i] = utf8.char(arr.list[i].value)
+    end
+
+    return table.concat(str)
+end
+
+april.string_intern_map = setmetatable({}, {
+    __index = function(self, key)
+        local stringvalue = april.javaStringToLuaString(key.value)
+        local obj = rawget(self, stringvalue)
+        if not obj then
+            obj = key
+            self[stringvalue] = key
+        end
+
+        return obj
+    end
+})
 
 return april
 

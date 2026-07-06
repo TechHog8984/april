@@ -105,6 +105,7 @@ export type ReturnDescriptor = {
 export type MethodDescriptor = {
     tag: "MethodDescriptor",
     size: number,
+    stacksize: number,
     raw: string,
     parameter_count: number,
     parameter_list: { FieldDescriptor },
@@ -124,7 +125,8 @@ local function _readFieldDescriptor(reader: Reader): FieldDescriptor?
                 base_type = BASE_TYPE_NAME_MAP[char]
             },
             size = BASE_TYPE_SIZE_MAP[char],
-            raw = string.sub(reader.data, start, reader.offset - 1)
+            stacksize = BASE_TYPE_SIZE_MAP[char],
+            raw = string.sub(reader.data, start, start)
         }
     elseif char == 'L' then
         local class_name = ""
@@ -135,9 +137,8 @@ local function _readFieldDescriptor(reader: Reader): FieldDescriptor?
             end
             class_name ..= char
         end
-        -- FIXME: i have no idea why this fixes things...
         local offset = reader.offset
-        if offset ~= reader.length then
+        if offset < reader.length then
             offset -= 1
         end
         return {
@@ -147,10 +148,15 @@ local function _readFieldDescriptor(reader: Reader): FieldDescriptor?
                 name = class_name
             },
             size = 1,
+            stacksize = 1,
             raw = string.sub(reader.data, start, offset)
         }
     elseif char == '[' then
         local array_type = assert(_readFieldDescriptor(reader), "failed to read sub field descriptor in array")
+        local offset = reader.offset
+        if offset < reader.length then
+            offset -= 1
+        end
         return {
             tag = "FieldDescriptor",
             value = {
@@ -158,7 +164,8 @@ local function _readFieldDescriptor(reader: Reader): FieldDescriptor?
                 array_type = array_type
             },
             size = 1 + array_type.size,
-            raw = string.sub(reader.data, start, reader.offset - 1)
+            stacksize = 1,
+            raw = string.sub(reader.data, start, offset)
         }
     end
 
@@ -188,6 +195,7 @@ local function _readMethodDescriptor(reader: Reader): MethodDescriptor
     local parameter_list = {}
     local parameter_count = 0
     local total_parameters_size = 0
+    local total_stack_size = 0
     while not reader.is_at_end do
         local char = reader:char()
         if char == ')' then
@@ -199,6 +207,7 @@ local function _readMethodDescriptor(reader: Reader): MethodDescriptor
         parameter_list[#parameter_list + 1] = field
         parameter_count += 1
         total_parameters_size += field.size
+        total_stack_size += field.stacksize
     end
 
     local returns = _readReturnDescriptor(reader)
@@ -206,6 +215,7 @@ local function _readMethodDescriptor(reader: Reader): MethodDescriptor
     return {
         tag = "MethodDescriptor",
         size = total_parameters_size,
+        stacksize = total_stack_size,
         raw = string.sub(reader.data, start, reader.offset),
 
         parameter_count = parameter_count,

@@ -1,6 +1,7 @@
 #include "classreader.hpp"
 #include "codegenluau.hpp"
 #include "jarloader.hpp"
+#include "options.hpp"
 
 #include <cmath>
 #include <cstring>
@@ -14,6 +15,7 @@
     std::cout << std::format("april by techhog\n"
         "usage: {} inputfile [options]\n"
         "options:\n"
+        "  --verbose               -  enable logging\n"
         "  -o=outputfile           -  path to the output file\n"
         "  --output=outputfile     -  path to the output file\n"
         "  --jar=jarfile           -  path to the jar\n"
@@ -40,6 +42,8 @@ int handleRecordOption(const char* option, const char*& arg, bool can_be_empty =
     return 0;
 }
 
+bool april_logging_enabled = false;
+
 int main(int argc, char** argv) {
     if (argc < 2)
         printUsage(argc, argv);
@@ -55,6 +59,8 @@ int main(int argc, char** argv) {
     for (int i = 1; i < argc; i++) {
         const char* arg = argv[i];
         if (arg[0] == '-') {
+            if (strncmp(arg, "--verbose", 9) == 0)
+                april_logging_enabled = true;
             if (!handleRecordOption("--output-folder", arg)) {
                 output_folder_path = arg;
                 continue;
@@ -92,7 +98,6 @@ int main(int argc, char** argv) {
         }
 
         auto map = readJar(input_jar_path);
-        std::cout << "entry count: " << map->size() << std::endl;
 
         std::string path;
         path.reserve(strlen(output_folder_path) + 20);
@@ -111,7 +116,8 @@ int main(int argc, char** argv) {
                 break;
             }
 
-            std::cout << "doing the file: " << pair.first << std::endl;
+            if (april_logging_enabled)
+                std::cout << "doing the file: " << pair.first << std::endl;
 
             // int ret = readClassFile(file, _class);
             // if (!ret)
@@ -123,6 +129,9 @@ int main(int argc, char** argv) {
                 luauret = generateLuau(_class, output);
                 destroyClass(_class);
             }
+
+            if (april_logging_enabled)
+                std::cout << "did the file: " << pair.first << std::endl;
 
             if (classret)
                 break;
@@ -139,7 +148,6 @@ int main(int argc, char** argv) {
                 exit(1);
             }
             folderpath.erase(pos);
-            std::cout << folderpath << std::endl;
             std::error_code ec;
             std::filesystem::create_directories(folderpath, ec);
             if (ec) {
