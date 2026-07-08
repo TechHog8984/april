@@ -103,12 +103,30 @@ class a {
     float f2 = floattest(0.f, 1.f, 2.f, 3.f, 4.f);
     System.out.println(f2);
 
+    floattest2();
+
     // fmul
     System.out.println(f1 * f2);
     // f2i, imul
     System.out.println((int)f1 * inttest1);
 
+    System.out.println("doubles:");
+    // ldc2_w, dconst_0, dconst_1, i2d, dstore
+    double d1 = doubletest(1352352.0, 0.0, 1.0, 2.0, inttest1);
+    // dload, d2i
+    double d2 = doubletest2((int) d1, d1, d1, (int) d1, 0.0);
+
+    System.out.println(d1);
+    System.out.println(d2);
+
+    doubletest3();
+    doubletest4();
+
+    // dload, d2i
+    System.out.println((int)d1 * inttest1);
+
     System.out.println("aaaa:");
+    // idiv
     System.out.println(inttest1 / (inttest1 + 2));
 
     System.out.println("object stuff:");
@@ -275,6 +293,53 @@ class a {
   private static float floattest(float a, float b, float c, float d, float e) {
     // fload_0, fload_1, fload_2, fload_3, fload, fadd, fsub, freturn
     return a + b - c + d + e;
+  }
+  private static void floattest2() {
+    // ldc, fstore_0
+    float value1 = 210.f;
+    // ldc, fstore_1
+    float value2 = 220.f;
+    // ldc, fstore_2
+    float value3 = 230.f;
+    // ldc, fstore_3
+    float value4 = 240.f;
+    // ldc, fstore
+    float value5 = 250.f;
+    // fadd, fsub, fload_0, fload_1, fload_2, fload_3, fload
+    System.out.println(value1 + value2 - value3 + value4 + value5);
+  }
+  private static double doubletest(double a, double b, double c, double d, double e) {
+    // dload_0, dload_2, dload, dadd, dsub, dreturn
+    return a + b - c + d + e;
+  }
+  private static double doubletest2(int a, double b, double c, int d, double e) {
+    // iload_0, dload_1, dload_3, iload, i2d, dadd, dsub
+    return a + b - c + d + e;
+  }
+  private static void doubletest3() {
+    // ldc2_w, dstore_0
+    double value1 = 210.d;
+    // ldc2_w, dstore
+    double value2 = 220.d;
+    // ldc2_w, dstore_2
+    double value3 = 230.d;
+    // ldc2_w, dstore
+    double value4 = 240.d;
+    // ldc2_w, dstore
+    double value5 = 250.d;
+    // dadd, dsub, dload_0, dload_2, dload
+    System.out.println(value1 + value2 - value3 + value4 + value5);
+  }
+  private static void doubletest4() {
+    int value1 = 4;
+    // ldc2_w, dstore_1
+    double value2 = 220.d;
+    // ldc2_w, dstore_3
+    double value3 = 240.d;
+    // ldc2_w, dstore
+    double value4 = 250.d;
+    // dadd, dsub, dload_1, dload_3, dload
+    System.out.println(value1 + value2 - value3 + value4);
   }
   private static long longtest(long a, long b, long c, long d) {
     // lload_0, lload_2, lload
