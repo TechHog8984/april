@@ -372,18 +372,17 @@ function natives.registerDefault()
 
     natives.registerMethods("java/lang/Float", {
         ["floatToRawIntBits-(F)I"] = function(float)
-            -- TODO: proper conversion?
-            return april.coerce(float, descriptor_parser.parseFieldDescriptor('I'))
+            return april.newInteger(float.bytes)
         end
     })
     natives.registerMethods("java/lang/Double", {
         ["doubleToRawLongBits-(D)J"] = function(double)
-            -- TODO: proper conversion?
-            return april.coerce(double, descriptor_parser.parseFieldDescriptor('J'))
+            -- TODO: double check NaN differences between this and doubleToLongBits
+
+            return april.newLongFromBits(double.high, double.low)
         end,
         ["longBitsToDouble-(J)D"] = function(long)
-            -- TODO: proper conversion?
-            return april.coerce(long, descriptor_parser.parseFieldDescriptor('D'))
+            return april.newDoubleFromBits(long.high, long.low)
         end
     })
 
@@ -632,7 +631,7 @@ function natives.registerDefault()
 
     local byte_newline = string.byte('\n')
     local stdout_buffer = table.create(256)
-    local function writeStdout(data, start, count)
+    local function writeStdoutBytes(data, start, count)
         if count < 1 then return end
 
         local index = 0
@@ -645,16 +644,18 @@ function natives.registerDefault()
                 index = i + 1
                 break
             end
-            stdout_buffer[#stdout_buffer + 1] = utf8.char(char)
+            char = april.wrapUnsigned(char, 8)
+            stdout_buffer[#stdout_buffer + 1] = string.pack('B', char)
         end
 
         if index == 0 then
-            print(table.concat(stdout_buffer))
-            table.clear(stdout_buffer)
             return
         end
 
-        writeStdout(data, index, count - index)
+        print(table.concat(stdout_buffer))
+        table.clear(stdout_buffer)
+
+        writeStdoutBytes(data, index, count - index)
     end
 
     natives.registerMethods("java/io/FileInputStream", {
@@ -675,7 +676,7 @@ function natives.registerDefault()
 
             if fd == fd_out then
                 if not b.value.list then error"larp" end
-                writeStdout(b.value.list, off.value, len.value)
+                writeStdoutBytes(b.value.list, off.value, len.value)
 
                 return
             end

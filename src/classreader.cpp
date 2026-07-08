@@ -620,7 +620,9 @@ int readClassFile(std::istream& classfile, Class &_class) {
                 }
                 break;
             case ConstantType::Double:
-                constant.Double.bits = ((long) readu4(classfile) << 32) + readu4(classfile);
+                constant.Double.high = readu4(classfile);
+                constant.Double.low = readu4(classfile);
+                constant.Double.bits = ((long) constant.Double.high << 32) + constant.Double.low;
                 if (april_logging_enabled) {
                     std::cout << "    bits = " << constant.Double.bits << std::endl;
                     std::cout << "    value = ";

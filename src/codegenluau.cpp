@@ -502,8 +502,8 @@ int outputClass(Class& _class, std::string& output) {
                             break;
                         case ConstantType::Float:
                             indent(output);
-                            output.append("local value = april.newFloat(")
-                                .append(floatTostring(constant.Float.value))
+                            output.append("local value = april.newFloatFromBytes(")
+                                .append(std::to_string(constant.Float.bytes))
                                 .append(")\n");
                             break;
                         default:
@@ -969,8 +969,10 @@ int outputClass(Class& _class, std::string& output) {
                                 break;
                             case ConstantType::Double:
                                 indent(output);
-                                output.append("local value = april.newDouble(")
-                                    .append(doubleTostring(constant.Double.value))
+                                output.append("local value = april.newDoubleFromBits(")
+                                    .append(std::to_string(constant.Double.high))
+                                    .append(", ")
+                                    .append(std::to_string(constant.Double.low))
                                     .append(")\n");
                                 break;
 
@@ -1319,7 +1321,7 @@ int outputClass(Class& _class, std::string& output) {
                         indent(output);
                         output.append("assert(array.value.class.isarray, \"invalid value (not array) for array in iaload instruction\")\n");
                         indent(output);
-                        output.append("assert(array.value.class == april.getArrayClass(\"[I\"), \"invalid value (not integer array) for array in iaload instruction\")\n");
+                        output.append("assert(array.value.class == april.getClass(\"[I\"), \"invalid value (not integer array) for array in iaload instruction\")\n");
 
                         // TODO: outofbounds exception
                         indent(output);
@@ -1342,7 +1344,7 @@ int outputClass(Class& _class, std::string& output) {
                         indent(output);
                         output.append("assert(array.value.class.isarray, \"invalid value (not array) for array in laload instruction\")\n");
                         indent(output);
-                        output.append("assert(array.value.class == april.getArrayClass(\"[J\"), \"invalid value (not long array) for array in laload instruction\")\n");
+                        output.append("assert(array.value.class == april.getClass(\"[J\"), \"invalid value (not long array) for array in laload instruction\")\n");
 
                         // TODO: outofbounds exception
                         indent(output);
@@ -1365,7 +1367,7 @@ int outputClass(Class& _class, std::string& output) {
                         indent(output);
                         output.append("assert(array.value.class.isarray, \"invalid value (not array) for array in faload instruction\")\n");
                         indent(output);
-                        output.append("assert(array.value.class == april.getArrayClass(\"[F\"), \"invalid value (not float array) for array in faload instruction\")\n");
+                        output.append("assert(array.value.class == april.getClass(\"[F\"), \"invalid value (not float array) for array in faload instruction\")\n");
 
                         // TODO: outofbounds exception
                         indent(output);
@@ -1388,7 +1390,7 @@ int outputClass(Class& _class, std::string& output) {
                         indent(output);
                         output.append("assert(array.value.class.isarray, \"invalid value (not array) for array in daload instruction\")\n");
                         indent(output);
-                        output.append("assert(array.value.class == april.getArrayClass(\"[D\"), \"invalid value (not double array) for array in daload instruction\")\n");
+                        output.append("assert(array.value.class == april.getClass(\"[D\"), \"invalid value (not double array) for array in daload instruction\")\n");
 
                         // TODO: outofbounds exception
                         indent(output);
@@ -1434,7 +1436,7 @@ int outputClass(Class& _class, std::string& output) {
                         indent(output);
                         output.append("assert(array.value.class.isarray, \"invalid value (not array) for array in baload instruction\")\n");
                         indent(output);
-                        output.append("assert(array.value.class == april.getArrayClass(\"[B\") or array.value.class == april.getArrayClass(\"[Z\"), \"invalid value (not byte or boolean array) for array in baload instruction\")\n");
+                        output.append("assert(array.value.class == april.getClass(\"[B\") or array.value.class == april.getClass(\"[Z\"), \"invalid value (not byte or boolean array) for array in baload instruction\")\n");
 
                         // TODO: outofbounds exception
                         indent(output);
@@ -1457,7 +1459,7 @@ int outputClass(Class& _class, std::string& output) {
                         indent(output);
                         output.append("assert(array.value.class.isarray, \"invalid value (not array) for array in caload instruction\")\n");
                         indent(output);
-                        output.append("assert(array.value.class == april.getArrayClass(\"[C\"), \"invalid value (not char array) for array in caload instruction\")\n");
+                        output.append("assert(array.value.class == april.getClass(\"[C\"), \"invalid value (not char array) for array in caload instruction\")\n");
 
                         // TODO: outofbounds exception
                         indent(output);
@@ -1480,7 +1482,7 @@ int outputClass(Class& _class, std::string& output) {
                         indent(output);
                         output.append("assert(array.value.class.isarray, \"invalid value (not array) for array in saload instruction\")\n");
                         indent(output);
-                        output.append("assert(array.value.class == april.getArrayClass(\"[S\"), \"invalid value (not short array) for array in saload instruction\")\n");
+                        output.append("assert(array.value.class == april.getClass(\"[S\"), \"invalid value (not short array) for array in saload instruction\")\n");
 
                         // TODO: outofbounds exception
                         indent(output);
@@ -1722,7 +1724,7 @@ int outputClass(Class& _class, std::string& output) {
                         indent(output);
                         output.append("assert(array.value.class.isarray, \"invalid value (not array) for array in iastore instruction\")\n");
                         indent(output);
-                        output.append("assert(array.value.class == april.getArrayClass(\"[I\"), \"invalid value (not integer array) for array in iastore instruction\")\n");
+                        output.append("assert(array.value.class == april.getClass(\"[I\"), \"invalid value (not integer array) for array in iastore instruction\")\n");
 
                         // TODO: outofbounds exception
                         indent(output);
@@ -1750,7 +1752,7 @@ int outputClass(Class& _class, std::string& output) {
                         indent(output);
                         output.append("assert(array.value.class.isarray, \"invalid value (not array) for array in lastore instruction\")\n");
                         indent(output);
-                        output.append("assert(array.value.class == april.getArrayClass(\"[L\"), \"invalid value (not long array) for array in lastore instruction\")\n");
+                        output.append("assert(array.value.class == april.getClass(\"[J\"), \"invalid value (not long array) for array in lastore instruction\")\n");
 
                         // TODO: outofbounds exception
                         indent(output);
@@ -1778,7 +1780,7 @@ int outputClass(Class& _class, std::string& output) {
                         indent(output);
                         output.append("assert(array.value.class.isarray, \"invalid value (not array) for array in fastore instruction\")\n");
                         indent(output);
-                        output.append("assert(array.value.class == april.getArrayClass(\"[F\"), \"invalid value (not float array) for array in fastore instruction\")\n");
+                        output.append("assert(array.value.class == april.getClass(\"[F\"), \"invalid value (not float array) for array in fastore instruction\")\n");
 
                         // TODO: outofbounds exception
                         indent(output);
@@ -1806,7 +1808,7 @@ int outputClass(Class& _class, std::string& output) {
                         indent(output);
                         output.append("assert(array.value.class.isarray, \"invalid value (not array) for array in dastore instruction\")\n");
                         indent(output);
-                        output.append("assert(array.value.class == april.getArrayClass(\"[D\"), \"invalid value (not double array) for array in dastore instruction\")\n");
+                        output.append("assert(array.value.class == april.getClass(\"[D\"), \"invalid value (not double array) for array in dastore instruction\")\n");
 
                         // TODO: outofbounds exception
                         indent(output);
@@ -1870,7 +1872,7 @@ int outputClass(Class& _class, std::string& output) {
                         indent(output);
                         output.append("assert(array.value.class.isarray, \"invalid value (not array) for array in bastore instruction\")\n");
                         indent(output);
-                        output.append("assert(array.value.class == april.getArrayClass(\"[Z\") or array.value.class == april.getArrayClass(\"[B\"), \"invalid value (not boolean or char array) for array in bastore instruction\")\n");
+                        output.append("assert(array.value.class == april.getClass(\"[Z\") or array.value.class == april.getClass(\"[B\"), \"invalid value (not boolean or char array) for array in bastore instruction\")\n");
 
                         // TODO: outofbounds exception
                         indent(output);
@@ -1898,7 +1900,7 @@ int outputClass(Class& _class, std::string& output) {
                         indent(output);
                         output.append("assert(array.value.class.isarray, \"invalid value (not array) for array in castore instruction\")\n");
                         indent(output);
-                        output.append("assert(array.value.class == april.getArrayClass(\"[C\"), \"invalid value (not char array) for array in castore instruction\")\n");
+                        output.append("assert(array.value.class == april.getClass(\"[C\"), \"invalid value (not char array) for array in castore instruction\")\n");
 
                         // TODO: outofbounds exception
                         indent(output);
@@ -1926,7 +1928,7 @@ int outputClass(Class& _class, std::string& output) {
                         indent(output);
                         output.append("assert(array.value.class.isarray, \"invalid value (not array) for array in sastore instruction\")\n");
                         indent(output);
-                        output.append("assert(array.value.class == april.getArrayClass(\"[S\"), \"invalid value (not short array) for array in sastore instruction\")\n");
+                        output.append("assert(array.value.class == april.getClass(\"[S\"), \"invalid value (not short array) for array in sastore instruction\")\n");
 
                         // TODO: outofbounds exception
                         indent(output);

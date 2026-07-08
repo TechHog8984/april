@@ -32,6 +32,7 @@ export type JavaInteger = {
 export type JavaFloat = {
     tag: "float",
     value: number,
+    bytes: number,
     category1: true
 }
 export type JavaLong = {
@@ -44,6 +45,8 @@ export type JavaLong = {
 export type JavaDouble = {
     tag: "double",
     value: number,
+    high: number,
+    low: number,
     category1: false
 }
 export type JavaBoolean = {
@@ -123,39 +126,79 @@ end
 function april.newFloat(value: number): JavaFloat
     -- narrow to f32
     value = tonumber(("%f"):format(value)) :: number
+    local str = string.pack('f', value)
+
+    local bytes = string.unpack("I4", str)
 
     return {
         tag = "float",
         value = value,
+        bytes = bytes,
         category1 = true
     }
 end
-local long_conversion_buffer = buffer.create(8)
+function april.newFloatFromBytes(bytes: number): JavaFloat
+    local str = string.pack("I4", bytes)
+
+    local value = string.unpack('f', str)
+
+    return {
+        tag = "float",
+        bytes = bytes,
+        value = value,
+        category1 = true
+    }
+end
 function april.newLong(value: number): JavaLong
     value = math.floor(value)
-    buffer.writef64(long_conversion_buffer, 0, value)
+    local str = string.pack('l', value)
+
+    local low, high = string.unpack("I4I4", str)
 
     return {
         tag = "long",
         value = value,
-        high = buffer.readu32(long_conversion_buffer, 0),
-        low = buffer.readu32(long_conversion_buffer, 4),
+        high = high,
+        low = low,
         category1 = false
     }
 end
 function april.newLongFromBits(high: number, low: number): JavaLong
+    local str = string.pack("I4I4", low, high)
+
+    local value = string.unpack('l', str)
+
     return {
         tag = "long",
-        value = high * (2^32) + low,
+        value = value,
         high = high,
         low = low,
         category1 = false
     }
 end
 function april.newDouble(value: number): JavaDouble
+    local str = string.pack('n', value)
+
+    local low, high = string.unpack("I4I4", str)
+
     return {
         tag = "double",
         value = value,
+        high = high,
+        low = low,
+        category1 = false
+    }
+end
+function april.newDoubleFromBits(high: number, low: number): JavaDouble
+    local str = string.pack("I4I4", low, high)
+
+    local value = string.unpack('n', str)
+
+    return {
+        tag = "double",
+        value = value,
+        high = high,
+        low = low,
         category1 = false
     }
 end

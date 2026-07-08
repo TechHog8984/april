@@ -96,6 +96,8 @@ struct Constant {
         } Long;
 
         struct {
+            uint32_t high;
+            uint32_t low;
             uint64_t bits;
             DoubleValue value;
         } Double;
