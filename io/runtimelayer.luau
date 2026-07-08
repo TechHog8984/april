@@ -1,3 +1,5 @@
+--!optimize 2
+
 local require = (require::any)
 
 local is_lune = false
@@ -11,12 +13,12 @@ end)
 
 local is_lute = false
 local lutefs
-local lutestdfs
-local luteluau
+-- local lutestdfs
+-- local luteluau
 pcall(function()
     lutefs = require("@lute/fs")
-    lutestdfs = require("@std/fs")
-    luteluau = require("@lute/luau")
+    -- lutestdfs = require("@std/fs")
+    -- luteluau = require("@lute/luau")
     is_lute = true
 end)
 
@@ -45,30 +47,12 @@ local listDir = if lunefs then lunefs.readDir else function(path)
 end
 -- local readFile = if lunefs then lunefs.readFile else lutestdfs.readFileToString
 local isFile = if lunefs then lunefs.isFile else function(path)
-    return lutefs.type(path) == "file"
+    return lutefs.exists(path) and lutefs.type(path) == "file"
 end
-
-local requirecache = {}
-local requireworkaround = if is_lute then function(path, name)
-    local cached = requirecache[name]
-    if cached then
-        return cached
-    end
-    local content = lutestdfs.readFileToString(path)
-    local bytecode = luteluau.compile(content)
-    local chunk = luteluau.load(bytecode, name)
-
-    local result = chunk()
-    requirecache[name] = result
-
-    return result
-end else function() error("require works on your runtime... just use it") end
 
 return {
     getProcessArgs = getProcessArgs,
     listDir = listDir,
     -- readFile = readFile,
     isFile = isFile,
-    requireisfuckingbroken = is_lute,
-    requireworkaround = requireworkaround
 }

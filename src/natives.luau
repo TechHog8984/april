@@ -1,3 +1,5 @@
+--!optimize 2
+
 local april = require("@april/april")
 local descriptor_parser = require("@april/descriptor")
 

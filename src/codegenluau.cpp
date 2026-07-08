@@ -5383,6 +5383,7 @@ int generateLuau(Class& _class, std::string& output) {
         }
     }
 
+    output.append("--!optimize 2\n");
     output.append("--[[\n    this file was generated via april by techhog\n    see https://github.com/TechHog8984/april for more information\n    \n");
     if (sourcefile) {
         output.append("    file: ");
@@ -5394,6 +5395,7 @@ int generateLuau(Class& _class, std::string& output) {
 
     output.append("assert(coroutine.isyieldable(), \"april needs to be ran in a yieldable thread\")\n");
 
+    // TODO: cli option (something like requiremode=shared or target=roblox etc) to not hardcode this way of getting april, natives, etc
     output.append("local april = require(\"@april/april\")\n")
         .append("local descriptor_parser = require(\"@april/descriptor\")\n")
         .append("local natives = require(\"@april/natives\")\n");

@@ -1,3 +1,4 @@
+--!optimize 2
 --!nolint LocalShadow
 -- stolen from aswartz by techhog
 

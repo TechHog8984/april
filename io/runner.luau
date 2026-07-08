@@ -1,3 +1,5 @@
+--!optimize 2
+
 local april = require("@april/april")
 local natives = require("@april/natives")
 local runtimelayer = require("./runtimelayer")
@@ -17,36 +19,19 @@ natives.registerMethods("tech/hog/a", {
 local classmap = {}
 april.registerClassMap(classmap)
 
-local filemap = {}
-
-local function traverse(dir, root)
-    root = root or dir
-    local relative = dir:sub(#root + 2, -1)
-    for _, entry in runtimelayer.listDir(dir) do
-        local path = dir .. '/' .. entry
-        if runtimelayer.isFile(path) then
-            filemap[relative .. '/' .. entry:match("(.+)%..+$")] = path
-        else
-            traverse(path, root)
-        end
-    end
-end
-traverse("./skep")
-traverse("./out")
-
--- print(filemap)
+local classpath = {
+    "./skep",
+    "./out"
+}
 
 function april.fetchClass(classname)
-    local path = filemap[classname]
-    assert(path, "failed to find class from classpath: " .. classname)
-
-    local cleanpath = path:match("(.+)%..+$")
-
-    -- if runtimelayer.requireisfuckingbroken then
-    --     return runtimelayer.requireworkaround(path, cleanpath)
-    -- end
-
-    return require(cleanpath)
+    for _, dir in classpath do
+        local path = dir .. '/' .. classname-- .. ".luau"
+        if runtimelayer.isFile(path .. ".luau") then
+            return require(path)
+        end
+    end
+    error("failed to find class from classpath: " .. classname)
 end
 
 -- TODO: thread initialization first
