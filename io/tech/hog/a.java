@@ -1,13 +1,22 @@
 package tech.hog;
 
 class Bruh {}
-class Dog {
+interface Meowing {
+  public void meow();
+}
+class Dog implements Meowing {
   // ldc
   public String name = "unnamed";
   public void bark() {
     System.out.print(name);
     System.out.println(" says woof");
     // System.out.println(name + " says woof");
+  }
+
+  @Override
+  public void meow() {
+    System.out.print(name);
+    System.out.println(" says meow");
   }
 }
 
@@ -52,6 +61,10 @@ class a {
     // astore_1, aload_1
     chi.bark();
 
+    Meowing meowing_chi = (Meowing) chi;
+    // invokeinterface
+    meowing_chi.meow();
+
     System.out.println("is the thing a whatever?");
     // instanceof
     System.out.println((Object) chi instanceof Chihuahua);
@@ -59,7 +72,8 @@ class a {
     System.out.println((Object) chi instanceof a);
 
     // iconst_2, iconst_3, iconst_4, iconst_5, invokestatic
-    System.out.println(integertest(2, 3, 4, 5));
+    int inttest1 = integertest(2, 3, 4, 5);
+    System.out.println(inttest1);
 
     // ld2c_w, invokestatic
     System.out.println(longtest(41829152, 41829153, 41829154, 41829155));
@@ -80,6 +94,22 @@ class a {
     longtest(48, 4953, 129, 4155);
 
     integertest2();
+
+    System.out.println("floats:");
+    // ldc, i2f, fconst_1
+    float f1 = floattest(24124.f, 324.f, -0.323f, inttest1, 1.f);
+    System.out.println(f1);
+    // fconst_0, fconst_1, fconst_2, ldc
+    float f2 = floattest(0.f, 1.f, 2.f, 3.f, 4.f);
+    System.out.println(f2);
+
+    // fmul
+    System.out.println(f1 * f2);
+    // f2i, imul
+    System.out.println((int)f1 * inttest1);
+
+    System.out.println("aaaa:");
+    System.out.println(inttest1 / (inttest1 + 2));
 
     System.out.println("object stuff:");
 
@@ -188,6 +218,20 @@ class a {
     System.out.println("ldc with Class:");
     System.out.println(a.class);
 
+    System.out.println("tableswitch:");
+    System.out.println(tableswitch(0));
+    System.out.println(tableswitch(1));
+    System.out.println(tableswitch(2));
+    System.out.println(tableswitch(3));
+    System.out.println(tableswitch(4));
+
+    System.out.println("lookupswitch:");
+    System.out.println(lookupswitch(0));
+    System.out.println(lookupswitch(1));
+    System.out.println(lookupswitch(100));
+    System.out.println(lookupswitch(200));
+    System.out.println(lookupswitch(1000));
+
     System.out.println("long comparison:");
     // dmul, d2l, lcmp, ifeq, goto
     System.out.println(nativeTest2() != 5L);
@@ -227,6 +271,10 @@ class a {
     int value5 = 250;
     // iadd, isub, iload_0, iload_1, iload_2, iload_3, iload
     System.out.println(value1 + value2 - value3 + value4 + value5);
+  }
+  private static float floattest(float a, float b, float c, float d, float e) {
+    // fload_0, fload_1, fload_2, fload_3, fload, fadd, fsub, freturn
+    return a + b - c + d + e;
   }
   private static long longtest(long a, long b, long c, long d) {
     // lload_0, lload_2, lload
@@ -291,5 +339,32 @@ class a {
     // if_acmpne, aload_0, aload_1, aload_2, aload_3, astore, aload, areturn
     Object e = a == b ? c : d;
     return e;
+  }
+
+  private static boolean tableswitch(int a) {
+    switch (a) {
+      case 0:
+      case 1:
+      case 2:
+        return true;
+      default:
+        return false;
+    }
+  }
+  private static int lookupswitch(int a) {
+    int result = 0;
+    switch (a) {
+      case 0:
+        result += 10;
+      case 100:
+        result += 100;
+      case 200:
+        result += 1000;
+        break;
+      default:
+        result -= 10;
+    }
+
+    return result;
   }
 }

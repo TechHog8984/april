@@ -15,12 +15,13 @@
     std::cout << std::format("april by techhog\n"
         "usage: {} inputfile [options]\n"
         "options:\n"
-        "  --verbose               -  enable logging\n"
-        "  -o=outputfile           -  path to the output file\n"
-        "  --output=outputfile     -  path to the output file\n"
-        "  --jar=jarfile           -  path to the jar\n"
-        "  --output-folder=folder  -  path to the output folder for jar\n",
-        argc ? argv[0] : "april") << std::endl;
+        "  --verbose                  -  enable logging\n"
+        "  -o=outputfile              -  path to the output file\n"
+        "  --output=outputfile        -  path to the output file\n"
+        "  --jar=jarfile              -  path to the jar\n"
+        "  --output-folder=folder     -  path to the output folder for jar\n"
+        "  --disable-codegen-asserts  -  disable codegen asserts. run twice to disable even more\n"
+        ,argc ? argv[0] : "april") << std::endl;
     exit(1);
 }
 
@@ -43,6 +44,7 @@ int handleRecordOption(const char* option, const char*& arg, bool can_be_empty =
 }
 
 bool april_logging_enabled = false;
+int disable_codegen_asserts = 0;
 
 int main(int argc, char** argv) {
     if (argc < 2)
@@ -59,9 +61,13 @@ int main(int argc, char** argv) {
     for (int i = 1; i < argc; i++) {
         const char* arg = argv[i];
         if (arg[0] == '-') {
-            if (strncmp(arg, "--verbose", 9) == 0)
+            if (strncmp(arg, "--verbose", 9) == 0) {
                 april_logging_enabled = true;
-            if (!handleRecordOption("--output-folder", arg)) {
+                continue;
+            } else if (strncmp(arg, "--disable-codegen-asserts", 26) == 0) {
+                disable_codegen_asserts++;
+                continue;
+            } else if (!handleRecordOption("--output-folder", arg)) {
                 output_folder_path = arg;
                 continue;
             } else if (!handleRecordOption("-o", arg) || !handleRecordOption("--output", arg)) {
