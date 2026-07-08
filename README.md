@@ -20,35 +20,4 @@ cmake -B build -S . && cmake --build build
 ```
 
 ## ACTUALLY DOING SOMETHING
-An output of april will not do anything on its own. For now, you can use the TEMPORARY [runner script](./io/runner.luau).
-
-The runner script has a stub for System.out.println so basic programs like the following can run:
-```java
-package tech.hog;
-
-class a {
-  private static int numfield = 1;
-  private static int numfield2 = 1410421;
-  private static double numfield3 = 0.05;
-  private static float numfield4 = -14.0036f;
-  public static void main(String[] args) {
-    System.out.println("Hello, world!");
-    System.out.println(numfield);
-    System.out.println(numfield2);
-    System.out.println(numfield3);
-    System.out.println(numfield4);
-  }
-}
-```
-```bash
-cd io
-../build/april ./bin/tech/hog/a.class -o=./out/a.luau
-lune run runner.luau tech/hog/a
-```
-```
-Hello, world!
-1
-1410421
-0.05
--14.0036
-```
+this section is in construction as I am overhauling things
