@@ -43,8 +43,6 @@ do
     main_class = argv[main_class_i]
 end
 
-for k,v in classpath_list do print(k,v)end
-
 natives.registerDefault()
 natives.registerMethods("tech/hog/a", {
     ["nativeTest-()D"] = function(...)
