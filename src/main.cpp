@@ -104,6 +104,8 @@ int main(int argc, char** argv) {
         }
 
         auto map = readJar(input_jar_path);
+        if (!map)
+            exit(1);
 
         std::string path;
         path.reserve(strlen(output_folder_path) + 20);
