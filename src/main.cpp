@@ -107,6 +107,11 @@ int main(int argc, char** argv) {
         if (!map)
             exit(1);
 
+        if (map->empty()) {
+            std::cerr << "[ERROR]: jar contained no .class files" << std::endl;
+            exit(1);
+        }
+
         std::string path;
         path.reserve(strlen(output_folder_path) + 20);
         std::string folderpath;
