@@ -374,7 +374,7 @@ int outputClass(Class& _class, std::string& output) {
                         resultvar = (byte1 << 24) | (byte2 << 16) | (byte3 << 8) | byte4;  \
                         }                                                                  
 
-                    // FIXME: test: monitorenter, monitorexit, ldc_w, invokespecial (on InterfaceMethodref), invokestatic (on InterfaceMethodref), l2i, dup_x1, dup_x2, dup2, dup2_x1, dup2_x2, lneg, dcmpl, dcmpg, land, lor, lshl, lshr, i2s, d2f, lushr, ddiv, laload, saload, daload, faload, fcmpg, fcmpl, lastore, sastore, dastore, fastore, irem, lmul, f2d, dsub, ldiv, lrem,  multianewarray, wide, l2d, fdiv, fadd, dneg, fsub, fneg, f2l, l2f, jsr, ret, drem, frem
+                    // FIXME: test: monitorenter, monitorexit, ldc_w, invokespecial (on InterfaceMethodref), invokestatic (on InterfaceMethodref), dup_x1, dup_x2, dup2, dup2_x1, dup2_x2, dcmpl, dcmpg, i2s, d2f, ddiv, laload, saload, daload, faload, fcmpg, fcmpl, lastore, sastore, dastore, fastore, irem, f2d, dsub, lrem,  multianewarray, wide, l2d, fdiv, fadd, dneg, fsub, fneg, f2l, l2f, jsr, ret, drem, frem
                     // TODO: null checks (reference tag with value == nil is a null object, hopefully)
                     // TODO: emulate monitorenter in all instructions that should and also emulate monitorexit in each return instruction
                     // FIXME: i recently realized that 'must be of type int' does NOT just mean tag == 'integer', so go back to such opcodes and use april.intValue or april.intJavaValue as applicable
@@ -2404,7 +2404,7 @@ int outputClass(Class& _class, std::string& output) {
                             }
 
                             indent(output);
-                            output.append("store(stack, april.newLong(value1.value + value2.value))\n");
+                            output.append("store(stack, april.longAdd(value1, value2))\n");
 
                             SETPC
                         OPCONDITIONAL(0x62, fadd)
@@ -2468,7 +2468,7 @@ int outputClass(Class& _class, std::string& output) {
                             }
 
                             indent(output);
-                            output.append("store(stack, april.newLong(value1.value - value2.value))\n");
+                            output.append("store(stack, april.longSub(value1, value2))\n");
 
                             SETPC
                         OPCONDITIONAL(0x66, fsub)
@@ -2532,7 +2532,7 @@ int outputClass(Class& _class, std::string& output) {
                             }
 
                             indent(output);
-                            output.append("store(stack, april.newLong(value1.value * value2.value))\n");
+                            output.append("store(stack, april.longMul(value1, value2))\n");
 
                             SETPC
                         OPCONDITIONAL(0x6d, ldiv)
@@ -2548,7 +2548,7 @@ int outputClass(Class& _class, std::string& output) {
                             }
 
                             indent(output);
-                            output.append("store(stack, april.newLong(value1.value / value2.value))\n");
+                            output.append("store(stack, april.longDiv(value1, value2))\n");
 
                             SETPC
                         OPCONDITIONAL(0x70, irem)
@@ -2715,8 +2715,10 @@ int outputClass(Class& _class, std::string& output) {
                                 output.append("assert(value.tag == \"long\", \"value in lneg was not a long\")\n");
                             }
 
+                            // FIXME: this breaks (for example on 5960499595488243465)
+
                             indent(output);
-                            output.append("store(stack, april.newLong(-value.value))\n");
+                            output.append("store(stack, april.longNegate(value))\n");
 
                             SETPC
                         OPCONDITIONAL(0x76, fneg)

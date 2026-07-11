@@ -165,6 +165,8 @@ function april.newLong(value: number): JavaLong
     }
 end
 function april.newLongFromBits(high: number, low: number): JavaLong
+    high = april.wrapUnsigned(high, 32)
+    low = april.wrapUnsigned(low, 32)
     local str = string.pack("I4I4", low, high)
 
     local value = string.unpack('l', str)
@@ -230,6 +232,163 @@ function april.newReturnAddress(value: number): JavaReturnAddress
         value = value,
         category1 = true
     }
+end
+
+local function longadd(ah: number, al: number, bh: number, bl: number): (number, number)
+    local low = al + bl
+    local carry = 0
+
+    if low >= 4294967296 then
+        low -= 4294967296
+        carry = 1
+    end
+
+    return april.wrapSigned(ah + bh + carry, 32),
+        april.wrapUnsigned(low, 32)
+end
+function april.longAdd(a: JavaLong, b: JavaLong): JavaLong
+    return april.newLongFromBits(longadd(a.high, a.low, b.high, b.low))
+end
+
+local function longsub(ah: number, al: number, bh: number, bl: number): (number, number)
+    local borrow = 0
+
+    local low = al - bl
+
+    if low < 0 then
+        low += 4294967296
+        borrow = 1
+    end
+
+    return april.wrapSigned(ah - bh - borrow, 32),
+        april.wrapUnsigned(low, 32)
+end
+function april.longSub(a: JavaLong, b: JavaLong): JavaLong
+    return april.newLongFromBits(longsub(a.high, a.low, b.high, b.low))
+end
+
+local function longmul32(a: number, b: number): (number, number)
+    local a0 = bit32.band(a, 0xffff)
+    local a1 = bit32.rshift(a, 16)
+
+    local b0 = bit32.band(b, 0xffff)
+    local b1 = bit32.rshift(b, 16)
+
+    local p0 = a0*b0
+    local p1 = a0*b1
+    local p2 = a1*b0
+    local p3 = a1*b1
+
+    local middle = bit32.rshift(p0, 16) + bit32.band(p1, 0xffff) + bit32.band(p2, 0xffff)
+
+    local low = bit32.bor(
+        bit32.lshift(bit32.band(middle, 0xffff), 16),
+        bit32.band(p0, 0xffff))
+
+    local high = p3 +
+        bit32.rshift(p1, 16) +
+        bit32.rshift(p2, 16) +
+        bit32.rshift(middle, 16)
+
+    return high, low
+end
+function april.longMul(a: JavaLong, b: JavaLong): JavaLong
+    local p0h, p0l = longmul32(a.low, b.low)
+
+    local _, c1 = longmul32(a.low, b.high)
+    local _, c2 = longmul32(a.high, b.low)
+
+    return april.newLongFromBits(
+        april.wrapSigned(p0h + c1 + c2, 32),
+        p0l
+    )
+end
+
+local function longcmp(ah: number, al: number, bh: number, bl: number)
+    if ah < bh then return -1 end
+    if ah > bh then return 1 end
+
+    if al < bl then return -1 end
+    if al > bl then return 1 end
+
+    return 0
+end
+
+local function longshl1(h: number, l: number): (number, number)
+    local newh = bit32.bor(bit32.lshift(h, 1), bit32.rshift(l, 31))
+    local newl = bit32.band(bit32.lshift(l, 1), 0xffffffff)
+
+    return april.wrapSigned(newh, 32), newl
+end
+
+local function longudiv(ah: number, al: number, bh: number, bl: number): (number, number)
+    local qh = 0
+    local ql = 0
+
+    local rh = 0
+    local rl = 0
+
+    for i = 63, 0, -1 do
+        rh, rl = longshl1(rh, rl)
+
+        local bit
+        if i >= 32 then
+            bit = bit32.band(bit32.rshift(ah, (i-32)), 1)
+        else
+            bit = bit32.band(bit32.rshift(al, i), 1)
+        end
+
+        rl = bit32.bor(rl, bit)
+
+        if longcmp(rh, rl, bh, bl) >= 0 then
+            rh, rl = longsub(rh, rl, bh, bl)
+
+            if i >= 32 then
+                qh = bit32.bor(qh, bit32.lshift(1, (i-32)))
+            else
+                ql = bit32.bor(ql, bit32.lshift(1, i))
+            end
+        end
+    end
+
+    return qh, ql
+end
+
+function longnegate(high: number, low: number): (number, number)
+    high = bit32.bnot(high)
+    low = bit32.bnot(low)
+
+    return longadd(high, low, 0, 1)
+end
+function april.longNegate(a: JavaLong): JavaLong
+    return april.newLongFromBits(longnegate(a.high, a.low))
+end
+function april.longDiv(a: JavaLong, b: JavaLong): JavaLong
+    local a_lt0 = longcmp(a.high, a.low, 0, 0) == -1
+    local b_lt0 = longcmp(b.high, b.low, 0, 0) == -1
+
+    local sign = bit32.bxor(if a_lt0 then 1 else 0, if b_lt0 then 1 else 0)
+
+    local ah = a.high
+    local al = a.low
+
+    local bh = b.high
+    local bl = b.low
+
+    if a_lt0 then
+        ah, al = longnegate(ah, al)
+    end
+    if b_lt0 then
+        bh, bl = longnegate(bh, bl)
+    end
+
+    local qh, ql = longudiv(ah, al, bh, bl)
+
+    if sign ~= 0 then
+        qh, ql = longnegate(qh, ql)
+    end
+
+    return april.newLongFromBits(qh, ql)
 end
 
 function april.coerce(input: JavaValue, target: descriptor_parser.FieldDescriptor): JavaValue

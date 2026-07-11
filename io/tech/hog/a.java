@@ -48,11 +48,7 @@ class a {
     System.out.println(0L);
     // lconst_1
     System.out.println(1L);
-    System.out.println(numfield);
-    System.out.println(numfield2);
-    System.out.println(numfield3);
-    System.out.println(numfield4);
-    System.out.println(numfield5);
+    System.out.println(numfield + ", " + numfield2 + ", " + numfield3 + ", " + numfield4 + ", " + numfield5);
 
     System.out.println(args.length);
 
@@ -72,7 +68,7 @@ class a {
     System.out.println((Object) chi instanceof a);
 
     // iconst_2, iconst_3, iconst_4, iconst_5, invokestatic
-    int inttest1 = integertest(2, 3, 4, 5);
+    int inttest1 = integertest0(2, 3, 4, 5);
     System.out.println(inttest1);
 
     // ld2c_w, invokestatic
@@ -89,19 +85,24 @@ class a {
     longtest5();
 
     // pop
-    integertest(2, 10, 4, 4);
+    integertest0(2, 10, 4, 4);
     // pop2
     longtest(48, 4953, 129, 4155);
 
+    System.out.println("long arithmetic:" + longtest7() + ", " + longtest8() + ", " + longtest9() + ", " + longtest10());
+    System.out.println("more: " + longtest11() + ", " + longtest12() + ", " + longtest13() + ", " + longtest14() + ", " + longtest15());
+    System.out.println("neg: " + (-longtest7()) + ", " + (-longtest14()) + ", " + (-longtest9()));
+
     integertest2();
 
-    System.out.println("floats:");
+    // l2i
+    System.out.println("aa: " + integertest1((int) longtest8()));
+
     // ldc, i2f, fconst_1
     float f1 = floattest(24124.f, 324.f, -0.323f, inttest1, 1.f);
-    System.out.println(f1);
     // fconst_0, fconst_1, fconst_2, ldc
     float f2 = floattest(0.f, 1.f, 2.f, 3.f, 4.f);
-    System.out.println(f2);
+    System.out.println("floats: " + f1 + ", " + f2);
 
     floattest2();
 
@@ -110,14 +111,12 @@ class a {
     // f2i, imul
     System.out.println((int)f1 * inttest1);
 
-    System.out.println("doubles:");
     // ldc2_w, dconst_0, dconst_1, i2d, dstore
     double d1 = doubletest(1352352.0, 0.0, 1.0, 2.0, inttest1);
     // dload, d2i
     double d2 = doubletest2((int) d1, d1, d1, (int) d1, 0.0);
 
-    System.out.println(d1);
-    System.out.println(d2);
+    System.out.println("doubles: " + d1 + ", " + d2);
 
     doubletest3();
     doubletest4();
@@ -125,21 +124,16 @@ class a {
     // dload, d2i
     System.out.println((int)d1 * inttest1);
 
-    System.out.println("aaaa:");
     // idiv
-    System.out.println(inttest1 / (inttest1 + 2));
+    System.out.println("aaaa: " + (inttest1 / (inttest1 + 2)));
 
-    System.out.println("object stuff:");
-
-    System.out.println(objecttest1(System.out, System.out));
-    System.out.println(objecttest1(System.out, System.err));
     // astore
     Object out = System.out;
-    // aload, if_acmpne, iconst_0, iconst_1, goto
-    System.out.println(out == out);
+    // aload, if_acmpne, iconst_1, iconst_0, goto, istore
+    boolean outeq = out == out;
+    System.out.println("object stuff: " + objecttest1(System.out, System.out) + ", " + objecttest1(System.out, System.err) + ", " + outeq);
 
-    System.out.println(objecttest2(System.out));
-    System.out.println(objecttest3());
+    System.out.println("more: " + objecttest2(System.out) + ", " + objecttest3());
 
     // aconst_null, astore, aload
     Object n = null;
@@ -163,20 +157,8 @@ class a {
     System.out.println(int1);
 
     System.out.println("some bitwise:");
-    // ishl
-    System.out.println(int1 << 1);
-    // ishr
-    System.out.println(-int1 >> 1);
-    // iushr
-    System.out.println(-int1 >>> 1);
-    // iand
-    System.out.println(int1 & 432);
-    // iand
-    System.out.println(int1 & int1);
-    // ior
-    System.out.println(int1 | 432);
-    // ixor
-    System.out.println(int1 ^ 432);
+    // ishl, ishr, iushr, iand, ior, ixor
+    System.out.println((int1 << 1) + ", " + (-int1 >> 1) + ", " + (-int1 >>> 1) + ", " + (int1 & 432) + ", " + (int1 & int1) + ", " + (int1 | 432) + ", " + (int1 ^ 432));
 
     System.out.println("some math:");
     // iconst_m1, imul
@@ -271,10 +253,13 @@ class a {
   private static native double nativeTest();
   private static native long nativeTest2();
 
-  private static int integertest(int a, int b, int c, int d) {
+  private static int integertest0(int a, int b, int c, int d) {
     // iload_0, iload_1, iload_2, iload_3
     // iadd, ireturn
     return a + b + c + d;
+  }
+  private static int integertest1(int a) {
+    return a - 104;
   }
   private static void integertest2() {
     // sipush, istore_0
@@ -384,6 +369,46 @@ class a {
     long value4 = 410L;
     // iadd, lsub, iload_0, iload_1, iload_2, i2l, lload_3
     System.out.println(value1 + value2 + value3 - value4);
+  }
+  private static long longtest6() {
+    // ldc2_w, lreturn
+    return 1435153151351L;
+  }
+  private static long longtest7() {
+    // ldc2_w, ladd, lreturn
+    return longtest6() + 4153215L;
+  }
+  private static long longtest8() {
+    // ldc2_w, lsub, lreturn
+    return longtest6() - 44234243153215L;
+  }
+  private static long longtest9() {
+    // ldc2_w, lmul, lreturn
+    return longtest6() * 4153215L;
+  }
+  private static long longtest10() {
+    // ldc2_w, ldiv, lreturn
+    return longtest6() / 4153215L;
+  }
+  private static long longtest11() {
+    // ldc, lshl, lreturn
+    return longtest6() << 4153215L;
+  }
+  private static long longtest12() {
+    // iconst_4, lshr, lreturn
+    return longtest6() >> 4L;
+  }
+  private static long longtest13() {
+    // iconst_5, lushr, lreturn
+    return longtest6() >>> 5L;
+  }
+  private static long longtest14() {
+    // ldc2_w, land, lreturn
+    return longtest6() & 4134L;
+  }
+  private static long longtest15() {
+    // ldc2_w, lor, lreturn
+    return longtest6() | 41341L;
   }
 
   private static boolean objecttest1(Object a, Object b) {
