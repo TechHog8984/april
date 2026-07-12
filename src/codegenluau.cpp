@@ -2715,8 +2715,6 @@ int outputClass(Class& _class, std::string& output) {
                                 output.append("assert(value.tag == \"long\", \"value in lneg was not a long\")\n");
                             }
 
-                            // FIXME: this breaks (for example on 5960499595488243465)
-
                             indent(output);
                             output.append("store(stack, april.longNegate(value))\n");
 
