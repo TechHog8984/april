@@ -621,12 +621,17 @@ function natives.registerDefault()
             end
             dict["putLong-(JJ)V"] = function(_, address, value)
                 local memory = assert(memory_pool[address.value])
-                buffer.writei32(memory, 0, value.low)
-                buffer.writei32(memory, 4, value.high)
+                buffer.writeu32(memory, 0, value.low)
+                buffer.writeu32(memory, 4, value.high)
             end
             dict["getByte-(J)B"] = function(_, address)
                 local memory = assert(memory_pool[address.value])
                 return april.newByte(buffer.readi8(memory, 0))
+            end
+
+            dict["pageSize-()I"] = function(_)
+                -- TODO: actually get _SC_PAGESIZE or wtv windows/mac does for it
+                return april.newInteger(4096)
             end
         end
     })
