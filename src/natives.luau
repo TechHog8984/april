@@ -238,6 +238,10 @@ function natives.registerDefault()
         ["registerNatives-()V"] = function()
             local dict = natives.class_to_dict_map["java/lang/System"]
 
+            dict["nanoTime-()J"] = function()
+                return april.newLong(os.clock() * 1000000000)
+            end
+
             dict["arraycopy-(Ljava/lang/Object;ILjava/lang/Object;II)V"] = function(src, srcpos, dest, destpos, length)
                 -- TODO: exceptions
 
@@ -414,7 +418,7 @@ function natives.registerDefault()
                 local run = april.lookupMethod(this.value.class.name, "run", "()V")
 
                 coroutine.wrap(function()
-                    run.func(this.value)
+                    run.func(this)
                 end)()
                 -- error"aight just spawned it"
             end
@@ -636,6 +640,32 @@ function natives.registerDefault()
                 memory_pool[pointer] = nil
 
                 return april.newLong(memory_pool_counter)
+            end
+            dict["setMemory-(Ljava/lang/Object;JJB)V"] = function(_, o, offset, bytes, value)
+                if o.value then
+                    error("TODO: setMemory on an object")
+                end
+
+                local memory = assert(memory_pool[offset.value])
+                for i = 1, bytes.value do
+                    buffer.writeu8(memory, i - 1, value.value)
+                end
+            end
+            dict["copyMemory-(Ljava/lang/Object;JLjava/lang/Object;JJ)V"] = function(_, src_base, src_offset, dest_base, dest_offset, bytes)
+                if src_base.value or dest_base.value then
+                    print(type(src_base.value), type(dest_base.value))
+                    error("TODO: copyMemory on a(n) object(s)")
+                end
+
+                local src_memory = assert(memory_pool[src_base.value])
+                local dest_memory = assert(memory_pool[dest_base.value])
+
+                local src_start = src_offset.value
+                local dest_start = dest_offset.value
+
+                for i = 1, bytes.value do
+                    buffer.writeu8(dest_memory, dest_start + i - 1, buffer.readu8(src_memory, src_start + i - 1))
+                end
             end
             dict["putLong-(JJ)V"] = function(_, address, value)
                 local memory = assert(memory_pool[address.value])
