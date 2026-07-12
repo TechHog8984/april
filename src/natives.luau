@@ -605,6 +605,24 @@ function natives.registerDefault()
 
                 return value
             end
+            dict["getLongVolatile-(Ljava/lang/Object;J)J"] = function(_, o, offset)
+                local class = o.value.class
+                local target_field
+                for _, field in class.fields do
+                    if field.slot == offset.value then
+                        target_field = field
+                        break
+                    end
+                end
+                assert(target_field)
+
+                -- TODO: make this atomic?
+
+                local value = o.value[target_field]
+                assert(value.tag == "long")
+
+                return value
+            end
 
             local memory_pool_counter = 0
             local memory_pool = {}
