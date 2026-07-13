@@ -111,9 +111,7 @@ int outputClass(Class& _class, std::string& output) {
             .append(field_name)
             .append("\", type = \"");
         output.insert(output.end(), field.descriptor->Utf8.bytes, field.descriptor->Utf8.bytes + field.descriptor->Utf8.bytes_size);
-        output.append("\", slot = ")
-            .append(std::to_string(i));
-        output.append(", access_flags = ")
+        output.append("\", slot = april.nextSlot(), access_flags = ")
             .append(std::to_string(field.access_flags));
         output.append(", isstatic = ")
             .append(field.access_flags & FIELD_ACC_STATIC ? "true" : "false");
@@ -473,7 +471,7 @@ int outputClass(Class& _class, std::string& output) {
                                 }
                                 output.push_back('\n');
                                 indent(output);
-                                output.append("local value = april.newStringFromLuaCharArray(array)\n");
+                                output.append("local value = april.string_intern_map[april.newStringFromLuaCharArray(array)]\n");
                                 break;
                             case ConstantType::Integer:
                                 indent(output);
@@ -2380,15 +2378,19 @@ int outputClass(Class& _class, std::string& output) {
                             output.append("local value2 = pop()\n");
                             indent(output);
                             output.append("local value1 = pop()\n");
+                            indent(output);
+                            output.append("local value1int = april.intValue(value1)\n");
+                            indent(output);
+                            output.append("local value2int = april.intValue(value2)\n");
                             if (disable_codegen_asserts == 0) {
                                 indent(output);
-                                output.append("assert(value1.tag == \"integer\", \"value1 in iadd was not an integer\")\n");
+                                output.append("assert(value1int, \"value1 in iadd was not an integer\")\n");
                                 indent(output);
-                                output.append("assert(value2.tag == \"integer\", \"value2 in iadd was not an integer\")\n");
+                                output.append("assert(value2int, \"value2 in iadd was not an integer\")\n");
                             }
 
                             indent(output);
-                            output.append("store(stack, april.newInteger(value1.value + value2.value))\n");
+                            output.append("store(stack, april.newInteger(value1int + value2int))\n");
 
                             SETPC
                         OPCONDITIONAL(0x61, ladd)
@@ -3255,13 +3257,15 @@ int outputClass(Class& _class, std::string& output) {
                         OPCONDITIONAL(0x91, i2b)
                             indent(output);
                             output.append("local value = pop()\n");
+                            indent(output);
+                            output.append("local intvalue = april.intValue(value)\n");
                             if (disable_codegen_asserts == 0) {
                                 indent(output);
-                                output.append("assert(value.tag == \"integer\", \"value in i2b was not an integer\")\n");
+                                output.append("assert(intvalue, \"value in i2b was not an integer\")\n");
                             }
 
                             indent(output);
-                            output.append("store(stack, april.newInteger(april.wrapSigned(value.value, 8)))\n");
+                            output.append("store(stack, april.newInteger(april.wrapSigned(intvalue, 8)))\n");
 
                             SETPC
                         OPCONDITIONAL(0x92, i2c)
@@ -4591,7 +4595,7 @@ int outputClass(Class& _class, std::string& output) {
                             output.insert(output.end(), constant.GeneralRef._class->Class.name->Utf8.bytes, constant.GeneralRef._class->Class.name->Utf8.bytes + constant.GeneralRef._class->Class.name->Utf8.bytes_size);
                             output.append("\", \"");
                             output.insert(output.end(), constant.GeneralRef.name_and_type->NameAndType.name->Utf8.bytes, constant.GeneralRef.name_and_type->NameAndType.name->Utf8.bytes + constant.GeneralRef.name_and_type->NameAndType.name->Utf8.bytes_size);
-                            output.append("\", methodtype, true)\n");
+                            output.append("\", methodtype, true, true)\n");
 
                             indent(output);
                             output.append("local object = stack[#stack - stacksize]\n");
@@ -5328,9 +5332,7 @@ int outputClass(Class& _class, std::string& output) {
         output.append("\",\n");
 
         indent(output);
-        output.append("slot = ")
-            .append(std::to_string(i))
-            .append(",\n");
+        output.append("slot = april.nextSlot(),\n");
 
         indent(output);
         output.append("access_flags = ")
@@ -5347,10 +5349,12 @@ int outputClass(Class& _class, std::string& output) {
         output.append("isabstract = ")
             .append(is_abstract ? "true,\n" : "false,\n");
 
-        indent(output);
-        output.append("func = ")
-            .append(localfunc_name)
-            .append(",\n");
+        if (!is_abstract) {
+            indent(output);
+            output.append("func = ")
+                .append(localfunc_name)
+                .append(",\n");
+        }
 
         subIndent();
         indent(output);

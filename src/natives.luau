@@ -73,6 +73,7 @@ function natives.registerDefault()
             end
         end
     })
+
     local primitive_name_map = {
         boolean = 'Z',
         byte = 'B',
@@ -93,11 +94,11 @@ function natives.registerDefault()
                 return april.newBoolean(true)
             end
             dict["getPrimitiveClass-(Ljava/lang/String;)Ljava/lang/Class;"] = function(name)
-                return april.getPrimitiveClass(primitive_name_map[april.javaStringToLuaString(name.value)])
+                return april.newReference(april.getPrimitiveClass(primitive_name_map[april.javaStringToLuaString(name.value)]).classobject)
             end
             dict["getName0-()Ljava/lang/String;"] = function(classobj)
                 local class = classobj.value.classclass
-                return april.newString((class.name:gsub("/", ".")))
+                return april.newString(class.namewithdots)
             end
             dict["forName0-(Ljava/lang/String;ZLjava/lang/ClassLoader;Ljava/lang/Class;)Ljava/lang/Class;"] = function(classname, initialize, loader, caller)
                 local name = april.javaStringToLuaString(classname.value):gsub("%.", "/")
@@ -199,6 +200,16 @@ function natives.registerDefault()
 
                 return april.newReference(array)
             end
+            dict["isArray-()Z"] = function(this)
+                local class = this.value.classclass
+
+                return april.newBoolean(class.isarray)
+            end
+            dict["getComponentType-()Ljava/lang/Class;"] = function(this)
+                local class = this.value.classclass
+
+                return april.newReference(april.getClassFromDescriptor(class.valuedescriptor).classobject)
+            end
             dict["isPrimitive-()Z"] = function(this)
                 local class = this.value.classclass
 
@@ -215,8 +226,8 @@ function natives.registerDefault()
 
                 assert(not (class.isarray and otherclass.isarray), "TODO: array checks")
                 return april.newBoolean(class == otherclass or
-                    april.hasSuperClass(class, otherclass) or
-                    april.implementsInterface(class, otherclass))
+                    april.hasSuperClass(otherclass, class) or
+                    april.implementsInterface(otherclass, class))
             end
             dict["getModifiers-()I"] = function(classobj)
                 -- TODO: something about InnerClass attribute? idk read sun/reflect/Reflection.java
@@ -349,6 +360,12 @@ function natives.registerDefault()
             end
         end,
     })
+    natives.registerMethods("java/lang/Runtime", {
+        ["availableProcessors-()I"] = function(_)
+            -- TODO: (probably in runtimelayer) call nproc or whatever on mac/windows
+            return april.newInteger(16)
+        end
+    });
 
     natives.registerMethods("java/io/UnixFileSystem", {
         ["initIDs-()V"] = function()
@@ -365,6 +382,12 @@ function natives.registerDefault()
 
                 -- return april.newString("hey bro");
                 return name
+            end
+            dict["findLoadedClass0-(Ljava/lang/String;)Ljava/lang/Class;"] = function(_, name)
+                local newname = april.javaStringToLuaString(name.value):gsub("%.", "/")
+
+                local class = april.findClass(newname)
+                return april.newReference(if class then class.classobject else nil)
             end
         end
     })
@@ -467,52 +490,65 @@ function natives.registerDefault()
 
             local array_layout_map = {
                 ["[B"] = {
-                    base_offset = 16,
+                    base_offset = 0,
                     index_scale = 1
                 },
                 ["[Z"] = {
-                    base_offset = 16,
+                    base_offset = 0,
                     index_scale = 1
                 },
                 ["[S"] = {
-                    base_offset = 16,
+                    base_offset = 0,
                     index_scale = 2
                 },
                 ["[C"] = {
-                    base_offset = 16,
+                    base_offset = 0,
                     index_scale = 2
                 },
                 ["[I"] = {
-                    base_offset = 16,
+                    base_offset = 0,
                     index_scale = 4
                 },
                 ["[F"] = {
-                    base_offset = 16,
+                    base_offset = 0,
                     index_scale = 4
                 },
                 ["[J"] = {
-                    base_offset = 16,
+                    base_offset = 0,
                     index_scale = 8
                 },
                 ["[D"] = {
-                    base_offset = 16,
+                    base_offset = 0,
                     index_scale = 8
                 },
                 ["[Ljava/lang/Object;"] = {
-                    base_offset = 16,
+                    base_offset = 0,
                     index_scale = 4
                 },
             }
 
+            local function getArrayLayout(valuedescriptor: descriptor_parser.FieldDescriptor)
+                local layout
+                local valuetype = valuedescriptor.value
+                if valuetype.tag == "Base" then
+                    layout = array_layout_map['[' .. valuedescriptor.raw]
+                else
+                    assert(valuetype.tag ~= "Array")
+                    layout = array_layout_map["[Ljava/lang/Object;"]
+                end
+
+                return assert(layout)
+            end
+
             dict["arrayBaseOffset-(Ljava/lang/Class;)I"] = function(_, classobject)
                 local class = classobject.value.classclass
-                local layout = assert(array_layout_map[class.name])
+                local layout = getArrayLayout(class.valuedescriptor)
 
                 return april.newInteger(layout.base_offset)
             end
             dict["arrayIndexScale-(Ljava/lang/Class;)I"] = function(_, classobject)
                 local class = classobject.value.classclass
-                local layout = assert(array_layout_map[class.name])
+                local layout = getArrayLayout(class.valuedescriptor)
 
                 return april.newInteger(layout.index_scale)
             end
@@ -523,34 +559,58 @@ function natives.registerDefault()
                 local slot = fieldobj.value[fieldobj.value.class.fields["slot"]]
                 return april.newLong(slot.value)
             end
-            dict["compareAndSwapObject-(Ljava/lang/Object;JLjava/lang/Object;Ljava/lang/Object;)Z"] = function(_, o, offset, expected, x)
+
+            local function getObjectValue(o, offset)
                 local class = o.value.class
-                local target_field
-                for _, field in class.fields do
-                    if field.slot == offset.value then
-                        target_field = field
-                        break
+                if class.isarray then
+                    -- we could probably hardcode 4 instead of getting index_scale, but idk
+                    local layout = getArrayLayout(class.valuedescriptor)
+                    local index = (offset / layout.index_scale) + 1
+                    return o.value.list[index], true, index
+                else
+                    local target_field
+                    for k in o.value do
+                        if type(k) ~= "table" then
+                            continue
+                        end
+
+                        if k.slot == offset then
+                            target_field = k
+                            break
+                        end
                     end
+                    assert(target_field)
+
+                    return o.value[target_field], false, target_field
                 end
-                assert(target_field)
+            end
+            -- FIXME: for all these slot loop to get field whatever stuff, i think i should check if the object is an array (given memoryCopy happens on arrays and i didn't realize and for arrays you do NOT do field slot lookup you just use the actual list values)
+            dict["compareAndSwapObject-(Ljava/lang/Object;JLjava/lang/Object;Ljava/lang/Object;)Z"] = function(_, o, offset, expected, x)
+                local value, isarray, indexorfield = getObjectValue(o, offset.value)
 
                 -- TODO: make this atomic?
 
-                local value = o.value[target_field]
-
                 if value.value == expected.value then
-                    o.value[target_field] = expected
+                    if isarray then
+                        o.value.list[indexorfield] = x
+                    else
+                        o.value[indexorfield] = x
+                    end
                     return april.newBoolean(true)
                 end
 
                 return april.newBoolean(false)
             end
             dict["compareAndSwapInt-(Ljava/lang/Object;JII)Z"] = function(_, o, offset, expected, x)
-                local class = o.value.class
+                assert(not o.value.class.isarray)
                 local target_field
-                for _, field in class.fields do
-                    if field.slot == offset.value then
-                        target_field = field
+                for k in o.value do
+                    if type(k) ~= "table" then
+                        continue
+                    end
+
+                    if k.slot == offset.value then
+                        target_field = k
                         break
                     end
                 end
@@ -562,18 +622,22 @@ function natives.registerDefault()
                 assert(value.tag == "integer")
 
                 if value.value == expected.value then
-                    o.value[target_field] = expected
+                    o.value[target_field] = x
                     return april.newBoolean(true)
                 end
 
                 return april.newBoolean(false)
             end
             dict["compareAndSwapLong-(Ljava/lang/Object;JJJ)Z"] = function(_, o, offset, expected, x)
-                local class = o.value.class
+                assert(not o.value.class.isarray)
                 local target_field
-                for _, field in class.fields do
-                    if field.slot == offset.value then
-                        target_field = field
+                for k in o.value do
+                    if type(k) ~= "table" then
+                        continue
+                    end
+
+                    if k.slot == offset.value then
+                        target_field = k
                         break
                     end
                 end
@@ -592,11 +656,15 @@ function natives.registerDefault()
                 return april.newBoolean(false)
             end
             dict["getIntVolatile-(Ljava/lang/Object;J)I"] = function(_, o, offset)
-                local class = o.value.class
+                assert(not o.value.class.isarray)
                 local target_field
-                for _, field in class.fields do
-                    if field.slot == offset.value then
-                        target_field = field
+                for k in o.value do
+                    if type(k) ~= "table" then
+                        continue
+                    end
+
+                    if k.slot == offset.value then
+                        target_field = k
                         break
                     end
                 end
@@ -610,11 +678,15 @@ function natives.registerDefault()
                 return value
             end
             dict["getLongVolatile-(Ljava/lang/Object;J)J"] = function(_, o, offset)
-                local class = o.value.class
+                assert(not o.value.class.isarray)
                 local target_field
-                for _, field in class.fields do
-                    if field.slot == offset.value then
-                        target_field = field
+                for k in o.value do
+                    if type(k) ~= "table" then
+                        continue
+                    end
+
+                    if k.slot == offset.value then
+                        target_field = k
                         break
                     end
                 end
@@ -627,19 +699,75 @@ function natives.registerDefault()
 
                 return value
             end
+            dict["getObjectVolatile-(Ljava/lang/Object;J)Ljava/lang/Object;"] = function(_, o, offset)
+                local value = getObjectValue(o, offset.value)
 
-            local memory_pool_counter = 0
-            local memory_pool = {}
+                -- TODO: make this atomic?
+
+                assert(value.tag == "reference")
+                return value
+            end
+
+            local memory_pool_counter = 1
+            local memory_pool: { Memory } = {}
+
+            type Memory = { tag: "raw", buf: buffer, size: number } | { tag: "reference", parent: Memory, offset: number }
+
+            local function memoryReadGeneric(func, memory: Memory, start: number)
+                if memory.tag == "raw" then
+                    return func(memory.buf, start)
+                elseif memory.tag == "reference" then
+                    return memoryReadGeneric(func, memory.parent, memory.offset + start)
+                end
+
+                print(memory.tag)
+                error("invalid memory tag")
+            end
+            local function memoryWriteGeneric(func, memory: Memory, start: number, value: number)
+                if memory.tag == "raw" then
+                    func(memory.buf, start, value)
+                elseif memory.tag == "reference" then
+                    memoryWriteGeneric(func, memory.parent, memory.offset + start, value)
+                else
+                    print(memory.tag)
+                    error("invalid memory tag")
+                end
+            end
+
+            local function memoryReadI8(memory: Memory, start: number)
+                return memoryReadGeneric(buffer.readi8, memory, start)
+            end
+
+            local function memoryWriteU8(memory: Memory, start: number, value: number)
+                memoryWriteGeneric(buffer.writeu8, memory, start, value)
+            end
+            local function memoryWriteI8(memory: Memory, start: number, value: number)
+                memoryWriteGeneric(buffer.writei8, memory, start, value)
+            end
+            local function memoryWriteU32(memory: Memory, start: number, value: number)
+                memoryWriteGeneric(buffer.writeu32, memory, start, value)
+            end
+
             dict["allocateMemory-(J)J"] = function(_, size)
-                memory_pool_counter += 1
-                memory_pool[memory_pool_counter] = buffer.create(size.value)
+                local sizev = size.value
+                local id = memory_pool_counter
+                local memory: Memory = { tag = "raw", buf = buffer.create(sizev), size = sizev }
+                memory_pool[id] = memory
 
-                return april.newLong(memory_pool_counter)
+                memory_pool_counter += sizev
+                for i = id + 1, memory_pool_counter - 1 do
+                    memory_pool[i] = { tag = "reference", parent = memory, offset = i - id }
+                end
+
+                return april.newLong(id)
             end
             dict["freeMemory-(J)V"] = function(_, pointer)
-                memory_pool[pointer] = nil
-
-                return april.newLong(memory_pool_counter)
+                local id = pointer.value
+                local memory = memory_pool[id]
+                assert(memory.tag == "raw")
+                for i = id, id + memory.size - 1 do
+                    memory_pool[i] = nil
+                end
             end
             dict["setMemory-(Ljava/lang/Object;JJB)V"] = function(_, o, offset, bytes, value)
                 if o.value then
@@ -647,34 +775,126 @@ function natives.registerDefault()
                 end
 
                 local memory = assert(memory_pool[offset.value])
-                for i = 1, bytes.value do
-                    buffer.writeu8(memory, i - 1, value.value)
+                local count = bytes.value
+                local val = value.value
+
+                for i = 1, count do
+                    memoryWriteU8(memory, i - 1, val)
                 end
             end
             dict["copyMemory-(Ljava/lang/Object;JLjava/lang/Object;JJ)V"] = function(_, src_base, src_offset, dest_base, dest_offset, bytes)
-                if src_base.value or dest_base.value then
-                    print(type(src_base.value), type(dest_base.value))
-                    error("TODO: copyMemory on a(n) object(s)")
+                local src_isnil = not src_base.value
+                local dest_isnil = not dest_base.value
+
+                local count = bytes.value
+
+                if src_isnil then
+                    -- NOTE: commented because untested
+                    -- if dest_isnil then
+                    --     local src_memory = assert(memory_pool[src_offset.value])
+                    --     local dest_memory = assert(memory_pool[dest_offset.value])
+
+                    --     for i = 1, count do
+                    --         memoryWriteU8(dest_memory, i - 1, memoryReadU8(src_memory, i - 1))
+                    --     end
+
+                    --     return
+                    -- else
+                    --     local src_memory = assert(memory_pool[src_offset.value])
+
+                    --     local class = dest_base.value.class
+                    --     local slot = dest_offset.value
+                    --     local target_field
+                    --     -- FIXME: update the slot code cuz i changed things
+
+                    --     for _, field in class.fields do
+                    --         if field.slot == slot then
+                    --             target_field = field
+                    --             break
+                    --         end
+                    --     end
+                    --     assert(target_field)
+
+                    --     local fieldtype = descriptor_parser.parseFieldDescriptor(target_field.type).value
+
+                    --     if fieldtype.tag == "Base" then
+                    --         if fieldtype.base_type == "float" then
+                    --             assert(count == 4)
+                    --             dest_base.value[target_field] = april.newFloatFromBytes(buffer.readu32(src_memory, 0))
+                    --
+                    --             return
+                    --         end
+                    --     end
+
+                    --     for k,v in fieldtype do print(k,v) end
+                    --     error("TODO: unimplemented field type in copyMemory")
+                    -- end
+                else
+                    if dest_isnil then
+                        local dest_memory = assert(memory_pool[dest_offset.value])
+
+                        if src_base.value.class.isarray then
+                            local valuetype: descriptor_parser.FieldDescriptorValue = src_base.value.class.valuedescriptor.value
+                            if valuetype.tag == "Base" then
+                                if valuetype.base_type == "float" then
+                                    assert(count % 4 == 0)
+                                    assert(src_offset.value == 0)
+                                    for i = 1, count, 4 do
+                                        memoryWriteU32(dest_memory, i - 1, src_base.value.list[(i - 1) / 4 + 1].bytes)
+                                    end
+
+                                    return
+                                end
+                            end
+
+                            for k,v in (valuetype::any) do print(k,v) end
+                            error("TODO: unimplemented array value type in copyMemory")
+                        else
+                            -- NOTE: commented because untested
+                            -- local slot = src_offset.value
+                            -- local target_field
+                            -- for k in src_base.value do
+                            --     if type(k) ~= "table" then
+                            --         continue
+                            --     end
+
+                            --     if k.slot == slot.value then
+                            --         target_field = k
+                            --         break
+                            --     end
+                            -- end
+                            -- assert(target_field)
+
+                            -- local fieldtype = descriptor_parser.parseFieldDescriptor(target_field.type).value
+
+                            -- if fieldtype.tag == "Base" then
+                            --     if fieldtype.base_type == "float" then
+                            --         assert(count == 4)
+                            --         memoryWriteU32(dest_memory, 0, src_base.value[target_field].bytes)
+                            --     end
+                            -- end
+
+                            -- for k,v in fieldtype do print(k,v) end
+                            -- error("TODO: unimplemented field type in copyMemory")
+                        end
+                    end
                 end
 
-                local src_memory = assert(memory_pool[src_base.value])
-                local dest_memory = assert(memory_pool[dest_base.value])
-
-                local src_start = src_offset.value
-                local dest_start = dest_offset.value
-
-                for i = 1, bytes.value do
-                    buffer.writeu8(dest_memory, dest_start + i - 1, buffer.readu8(src_memory, src_start + i - 1))
-                end
+                print(type(src_base.value), type(dest_base.value))
+                error("TODO: unimplemented copyMemory configuration")
             end
             dict["putLong-(JJ)V"] = function(_, address, value)
                 local memory = assert(memory_pool[address.value])
-                buffer.writeu32(memory, 0, value.low)
-                buffer.writeu32(memory, 4, value.high)
+                memoryWriteU32(memory, 0, value.low)
+                memoryWriteU32(memory, 4, value.high)
+            end
+            dict["putByte-(JB)V"] = function(_, address, value)
+                local memory = assert(memory_pool[address.value])
+                memoryWriteI8(memory, 0, value.value)
             end
             dict["getByte-(J)B"] = function(_, address)
                 local memory = assert(memory_pool[address.value])
-                return april.newByte(buffer.readi8(memory, 0))
+                return april.newByte(memoryReadI8(memory, 0))
             end
 
             dict["pageSize-()I"] = function(_)
@@ -692,7 +912,6 @@ function natives.registerDefault()
         local index = 0
         local endd = start + count
         for i = start, endd - 1 do
-            -- print(start, count, i)
             local char = data[i + 1].value
             -- TODO: carriage return
             if char == byte_newline then
@@ -713,9 +932,60 @@ function natives.registerDefault()
         writeStdoutBytes(data, index, count - index)
     end
 
+    local fd_map = {}
+    local fd_counter = 10
     natives.registerMethods("java/io/FileInputStream", {
         ["initIDs-()V"] = function()
 
+        end,
+        -- FIXME: these functions are stubs for me to just get past a certain program im running
+        ["open0-(Ljava/lang/String;)V"] = function(this, name)
+            local fd = fd_counter
+            fd_counter += 1
+            fd_map[fd] = april.javaStringToLuaString(name.value)
+
+            local file_input_stream_class = april.getClass("java/io/FileInputStream")
+            local file_descriptor_class = april.getClass("java/io/FileDescriptor")
+
+            local fdobj = april.newObject(file_descriptor_class)
+            local fdobjref = april.newReference(fdobj)
+
+            local init = file_descriptor_class.methods["<init>-(I)V"]
+            local attach = file_descriptor_class.methods["attach-(Ljava/io/Closeable;)V"]
+
+            init.func(fdobjref, april.newInteger(fd))
+            this.value[file_input_stream_class.fields.fd] = fdobjref
+            attach.func(fdobjref, this)
+        end,
+        ["close0-()V"] = function(this)
+            local file_input_stream_class = april.getClass("java/io/FileInputStream")
+            local file_descriptor_class = april.getClass("java/io/FileDescriptor")
+            local fdobj = this.value[file_input_stream_class.fields.fd].value
+            local fd = fdobj[file_descriptor_class.fields.fd].value
+
+            fd_map[fd] = nil
+        end,
+        ["readBytes-([BII)I"] = function(this, b, off, len)
+            local file_input_stream_class = april.getClass("java/io/FileInputStream")
+            local file_descriptor_class = april.getClass("java/io/FileDescriptor")
+            local fdobj = this.value[file_input_stream_class.fields.fd].value
+            local fd = fdobj[file_descriptor_class.fields.fd].value
+
+            -- local offv = off.value
+            -- local lenv = len.value
+
+            local name = fd_map[fd]
+            if name == "/home/techhog/.accessibility.properties" then
+                -- for i = offv, offv + lenv do
+                --     b.value.list[i + 1] = april.newByte(0)
+                -- end
+                -- return april.newInteger(lenv)
+
+                return april.newInteger(-1)
+            end
+
+            print(fd, name)
+            error("unhandled fd (this is a shitty stub)")
         end
     })
     natives.registerMethods("java/io/FileOutputStream", {
@@ -779,13 +1049,20 @@ function natives.registerDefault()
 
     natives.registerMethods("java/security/AccessController", {
         ["doPrivileged-(Ljava/security/PrivilegedExceptionAction;)Ljava/lang/Object;"] = function(action)
-            -- TODO: actually escelate privileges or whatever
+            -- TODO: actually escalate privileges or whatever
 
             local method = april.lookupMethod(action.value.class.name, "run", "()Ljava/lang/Object;")
             assert(not method.isabstract)
             return method.func(action)
         end,
         ["doPrivileged-(Ljava/security/PrivilegedAction;)Ljava/lang/Object;"] = function(action)
+            -- TODO: actually escalate privileges or whatever
+
+            local method = april.lookupMethod(action.value.class.name, "run", "()Ljava/lang/Object;")
+            assert(not method.isabstract)
+            return method.func(action)
+        end,
+        ["doPrivileged-(Ljava/security/PrivilegedAction;Ljava/security/AccessControlContext;)Ljava/lang/Object;"] = function(action, context)
             -- TODO: actually escalate privileges or whatever
 
             local method = april.lookupMethod(action.value.class.name, "run", "()Ljava/lang/Object;")
@@ -855,6 +1132,13 @@ function natives.registerDefault()
         end,
         ["handle0-(IJ)J"] = function(sig, handler)
             return april.newLong(0)
+        end
+    })
+
+    natives.registerMethods("sun/misc/URLClassPath", {
+        ["getLookupCacheURLs-(Ljava/lang/ClassLoader;)[Ljava/net/URL;"] = function(loader)
+            -- TODO: we could probably do this pretty easily since we do actually keep a cache, im just not doing it cuz im lazy (also we have to take into account the ClassLoader...)
+            return april.newReference()
         end
     })
 end

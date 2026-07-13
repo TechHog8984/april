@@ -408,6 +408,7 @@ function april.coerce(input: JavaValue, target: descriptor_parser.FieldDescripto
         end
         return input
     elseif targetvalue.tag == "Class" then
+        -- TODO: check cast
         assert(input.tag == "reference", "could not coerce value into instance")
         return input
     elseif targetvalue.tag == "Base" then
@@ -585,6 +586,13 @@ function april.clone(value: JavaValue): JavaValue
     return error("unhandled tag " .. tostring(value.tag))
 end
 
+local slot_counter = 0
+function april.nextSlot()
+    local value = slot_counter
+    slot_counter = value + 1
+    return value
+end
+
 local function assignClassObject(class)
     local classobject = april.newObject(april.getClass("java/lang/Class"))
     classobject.classclass = class
@@ -628,9 +636,11 @@ function april.getClass(classname): any
     return class
 end
 function april.getClassFromDescriptor(descriptor: descriptor_parser.FieldDescriptor): any
-    local classname = descriptor.raw
+    local classname
     if descriptor.value.tag == "Class" then
         classname = descriptor.value.name
+    else
+        classname = descriptor.raw
     end
 
     return april.getClass(classname)
@@ -816,7 +826,7 @@ function april.lookupField(classname: string, fieldname: string, fieldtype: stri
     return field, fieldclass
 end
 
-function april.lookupMethod(classname: string, methodname: string, methodtype: string, usecache: boolean?)
+function april.lookupMethod(classname: string, methodname: string, methodtype: string, usecache: boolean?, canbeabstract: boolean?)
     local class = april.getClass(classname)
 
     local combinedmethodname = methodname .. '-' .. methodtype
@@ -860,7 +870,10 @@ function april.lookupMethod(classname: string, methodname: string, methodtype: s
 
             local potentialclass = april.getClass(value)
             local potentialmethod = potentialclass.methods[combinedmethodname]
-            if potentialmethod and not potentialmethod.isabstract then
+            if not potentialmethod then
+                continue
+            end
+            if canbeabstract or not potentialmethod.isabstract then
                 method, methodclass = potentialmethod, potentialclass
             end
         end
@@ -1054,7 +1067,9 @@ function april.instanceofByClassAndTargetClass(class: any, targetclass: any)
                     Tvaluedescriptor = Tvaluedescriptor.value.array_type
                     continue
                 elseif Tvaluedescriptor.value.tag == "Class" then
-                    return Tvaluedescriptor.value.name == (Svaluedescriptor.value :: descriptor_parser.FieldDescriptorValueClass).name
+                    return april.instanceofByClassAndTargetName(
+                        april.getClass((Svaluedescriptor.value :: descriptor_parser.FieldDescriptorValueClass).name),
+                        Tvaluedescriptor.value.name)
                 end
             end
         else
