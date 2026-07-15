@@ -544,6 +544,36 @@ end
 
 function april.newStringFromLuaCharArray(array: { number }): JavaReference
     local count = #array
+    local newarray = table.create(#array)
+    do
+        local n = 0
+        local i = 1
+        while i <= count do
+            local b = array[i]
+
+            if bit32.band(b, 0x80) == 0 then
+                n += 1
+                newarray[n] = b;
+            elseif bit32.band(b, 0xE0) == 0xC0 then
+                i += 1
+                local b2 = assert(array[i], "invalid utf8")
+                n += 1
+                newarray[n] = bit32.bor(bit32.lshift(bit32.band(b, 0x1F), 6), bit32.band(b2, 0x3F));
+            else
+                i += 1
+                local b2 = assert(array[i], "invalid utf8")
+                i += 1
+                local b3 = assert(array[i], "invalid utf8")
+                n += 1
+                newarray[n] = bit32.bor(bit32.lshift(bit32.band(b, 0x0F), 12), bit32.lshift(bit32.band(b2, 0x3F), 6), bit32.band(b3, 0x3F));
+            end
+
+            i += 1
+        end
+        count = n
+        array = newarray
+    end
+
     local object = april.newObjectFromClassName("java/lang/String")
     local char_array = april.newArray('C', count)
     for i = 1, count do
@@ -716,6 +746,7 @@ local function newMonitor(object)
     }
 end
 
+local hashcode_counter = tonumber(tostring({}):match("^table: (0x[%d%a]+)$")) or 1000
 function april.newObject(class, static: boolean?): any
     april.loadClass(class)
 
@@ -724,7 +755,10 @@ function april.newObject(class, static: boolean?): any
         isstatic = static
     }
     object.monitor = newMonitor(object)
-    object.hashcode = tonumber(tostring(object):match("^table: (0x[%d%a]+)$"))
+
+    local hashcode = hashcode_counter + 4
+    object.hashcode = hashcode
+    hashcode_counter = hashcode
 
     local classname = class.name
     while classname do

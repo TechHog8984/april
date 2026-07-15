@@ -131,6 +131,12 @@ struct Exception {
     uint16_t handler_pc;
     uint16_t catch_type_index; Constant* catch_type;
 };
+struct InnerClass {
+    uint16_t inner_class_index; Constant* inner_class;
+    uint16_t outer_class_index; Constant* outer_class;
+    uint16_t inner_name_index; Constant* inner_name;
+    uint16_t inner_access_flags;
+};
 struct LineNumber {
     uint16_t start_pc;
     uint16_t line_number;
@@ -171,6 +177,11 @@ struct Attribute {
             uint16_t exception_count;
             Constant** exception_list;
         } Exceptions;
+
+        struct {
+            uint16_t count;
+            InnerClass* list;
+        } InnerClasses;
 
         struct {
             uint16_t class_index; Constant* _class;

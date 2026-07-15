@@ -7,6 +7,28 @@ local natives = {
     class_to_dict_map = {}
 }
 
+function natives.runProcess(...)
+    error("please override natives.runProcess")
+end
+function natives.isFile(...)
+    error("please override natives.isFile")
+end
+function natives.isDir(...)
+    error("please override natives.isDir")
+end
+function natives.fileExists(...)
+    error("please override natives.fileExists")
+end
+function natives.readFile(...)
+    error("please override natives.readFile")
+end
+function natives.setJavaHome(java_home)
+    natives.java_home = java_home
+end
+function natives.setJavaLibraryPath(java_library_path)
+    natives.java_library_path = java_library_path
+end
+
 function natives.registerDefault()
     natives.registerMethods("java/lang/Object", {
         ["registerNatives-()V"] = function()
@@ -109,6 +131,42 @@ function natives.registerDefault()
                 end
 
                 return april.newReference(class.classobject)
+            end
+            dict["getEnclosingMethod0-()[Ljava/lang/Object;"] = function(this)
+                local class = this.value.classclass
+
+                local enclosing = class.enclosingmethod
+                if not enclosing then
+                    return april.newReference()
+                end
+
+                local enclosingclass = april.getClass(enclosing.classname)
+                local methodname = enclosing.methodname;
+                local methodtype = enclosing.methodtype;
+
+                local array = april.newArray("Ljava/lang/Object;", 3)
+
+                array.list[1] = april.newReference(enclosingclass.classobject)
+                if methodname then
+                    assert(methodtype)
+                    array.list[2] = april.newString(methodname)
+                    array.list[3] = april.newString(methodtype)
+                end
+
+                return april.newReference(april)
+            end
+            dict["getDeclaringClass0-()Ljava/lang/Class;"] = function(this)
+                local class = this.value.classclass
+
+                if class.innerclasses then
+                    for _, info in class.innerclasses do
+                        if info.innerclassname == class.name then
+                            return april.newReference(april.getClass(info.outerclassname).classobject)
+                        end
+                    end
+                end
+
+                return april.newReference()
             end
             dict["getDeclaredFields0-(Z)[Ljava/lang/reflect/Field;"] = function(this, public_only)
                 local class = this.value.classclass
@@ -229,6 +287,10 @@ function natives.registerDefault()
                     april.hasSuperClass(otherclass, class) or
                     april.implementsInterface(otherclass, class))
             end
+            dict["isInstance-(Ljava/lang/Object;)Z"] = function(this, other)
+                local class = this.value.classclass
+                return april.newBoolean(april.instanceofByClassAndTargetClass(class, other.value.class))
+            end
             dict["getModifiers-()I"] = function(classobj)
                 -- TODO: something about InnerClass attribute? idk read sun/reflect/Reflection.java
                 local class = classobj.value.classclass
@@ -249,8 +311,15 @@ function natives.registerDefault()
         ["registerNatives-()V"] = function()
             local dict = natives.class_to_dict_map["java/lang/System"]
 
+            dict["currentTimeMillis-()J"] = function()
+                return april.newLong(os.clock() * 1000)
+            end
             dict["nanoTime-()J"] = function()
                 return april.newLong(os.clock() * 1000000000)
+            end
+
+            dict["identityHashCode-(Ljava/lang/Object;)I"] = function(o)
+                return april.newInteger(o.value.hashcode)
             end
 
             dict["arraycopy-(Ljava/lang/Object;ILjava/lang/Object;II)V"] = function(src, srcpos, dest, destpos, length)
@@ -289,6 +358,8 @@ function natives.registerDefault()
 
                 putProp("java.class.version", ("%d.%d"):format(SUPPORTED_VERSION, SUPPORTED_MINOR_VERSION))
 
+                putProp("java.home", (assert(natives.java_home, "you must call natives.setJavaHome")))
+
                 putProp("java.awt.toolkit", "sun.awt.X11.XToolkit") -- TODO: better value?
 
                 putProp("os.name", "Linux")
@@ -299,7 +370,7 @@ function natives.registerDefault()
                 putProp("path.separator", ":")
                 putProp("line.separator", "\n")
 
-                putProp("java.library.path", "/media/Documents/cpp/april/io")
+                putProp("java.library.path", (assert(natives.java_library_path, "you must call natives.setJavaLibraryPath")))
 
                 putProp("user.language", "en")
                 putProp("user.country", "US")
@@ -370,6 +441,35 @@ function natives.registerDefault()
     natives.registerMethods("java/io/UnixFileSystem", {
         ["initIDs-()V"] = function()
 
+        end,
+        ["canonicalize0-(Ljava/lang/String;)Ljava/lang/String;"] = function(_, relpath)
+            local result = natives.runProcess("realpath", { april.javaStringToLuaString(relpath.value) })
+
+            assert(result.ok)
+
+            return april.newString((result.stdout:match("(.+)\n$")))
+        end,
+        ["getBooleanAttributes0-(Ljava/io/File;)I"] = function(_, file)
+            local class = april.getClass("java/io/File");
+            local path = april.javaStringToLuaString(file.value[class.fields.path].value)
+
+            local exists = natives.fileExists(path)
+            if not exists then
+                return april.newInteger(0)
+            end
+
+            local is_file = natives.isFile(path)
+            local is_dir = natives.isDir(path)
+
+            local attributes = 0x01
+
+            if is_file then
+                attributes = bit32.bor(attributes, 0x02)
+            elseif is_dir then
+                attributes = bit32.bor(attributes, 0x04)
+            end
+
+            return april.newInteger(attributes)
         end
     })
 
@@ -488,6 +588,10 @@ function natives.registerDefault()
         ["registerNatives-()V"] = function()
             local dict = natives.class_to_dict_map["sun/misc/Unsafe"]
 
+            dict["ensureClassInitialized-(Ljava/lang/Class;)V"] = function(_, classobject)
+                april.loadClass(classobject.value.classclass)
+            end
+
             local array_layout_map = {
                 ["[B"] = {
                     base_offset = 0,
@@ -555,9 +659,21 @@ function natives.registerDefault()
             dict["addressSize-()I"] = function()
                 return april.newInteger(8)
             end
+            -- TODO: checks for static field?
             dict["objectFieldOffset-(Ljava/lang/reflect/Field;)J"] = function(_, fieldobj)
                 local slot = fieldobj.value[fieldobj.value.class.fields["slot"]]
                 return april.newLong(slot.value)
+            end
+            dict["staticFieldOffset-(Ljava/lang/reflect/Field;)J"] = function(_, fieldobj)
+                local slot = fieldobj.value[fieldobj.value.class.fields["slot"]]
+                return april.newLong(slot.value)
+            end
+            dict["staticFieldBase-(Ljava/lang/reflect/Field;)Ljava/lang/Object;"] = function(_, fieldobj)
+                -- TODO: idk if this is right
+                local fieldclass = april.getClass("java/lang/reflect/Field")
+                local class = fieldobj.value[fieldclass.fields.clazz].value.classclass
+
+                return april.newReference(class.staticinstance)
             end
 
             local function getObjectValue(o, offset)
@@ -706,6 +822,17 @@ function natives.registerDefault()
 
                 assert(value.tag == "reference")
                 return value
+            end
+            dict["putObjectVolatile-(Ljava/lang/Object;JLjava/lang/Object;)V"] = function(_, o, offset, value)
+                local _, isarray, indexorfield = getObjectValue(o, offset.value)
+
+                if isarray then
+                    o.value.list[indexorfield] = value
+                else
+                    o.value[indexorfield] = value
+                end
+
+                -- TODO: make this atomic?
             end
 
             local memory_pool_counter = 1
@@ -932,17 +1059,25 @@ function natives.registerDefault()
         writeStdoutBytes(data, index, count - index)
     end
 
-    local fd_map = {}
+    type FileReference = {
+        path: string,
+        fd: number,
+        offset: number
+    }
+    local fd_map: { FileReference } = {}
     local fd_counter = 10
     natives.registerMethods("java/io/FileInputStream", {
         ["initIDs-()V"] = function()
 
         end,
-        -- FIXME: these functions are stubs for me to just get past a certain program im running
-        ["open0-(Ljava/lang/String;)V"] = function(this, name)
+        ["open0-(Ljava/lang/String;)V"] = function(this, path)
             local fd = fd_counter
             fd_counter += 1
-            fd_map[fd] = april.javaStringToLuaString(name.value)
+            fd_map[fd] = {
+                path = april.javaStringToLuaString(path.value),
+                fd = fd,
+                offset = 0
+            }
 
             local file_input_stream_class = april.getClass("java/io/FileInputStream")
             local file_descriptor_class = april.getClass("java/io/FileDescriptor")
@@ -965,27 +1100,82 @@ function natives.registerDefault()
 
             fd_map[fd] = nil
         end,
-        ["readBytes-([BII)I"] = function(this, b, off, len)
+        ["readBytes-([BII)I"] = function(this, b, boffset, len)
             local file_input_stream_class = april.getClass("java/io/FileInputStream")
             local file_descriptor_class = april.getClass("java/io/FileDescriptor")
             local fdobj = this.value[file_input_stream_class.fields.fd].value
             local fd = fdobj[file_descriptor_class.fields.fd].value
 
-            -- local offv = off.value
-            -- local lenv = len.value
+            local boffsetv = boffset.value
+            local lengthv = len.value
 
-            local name = fd_map[fd]
-            if name == "/home/techhog/.accessibility.properties" then
-                -- for i = offv, offv + lenv do
-                --     b.value.list[i + 1] = april.newByte(0)
-                -- end
-                -- return april.newInteger(lenv)
+            local file = fd_map[fd]
+            if not file then
+                -- TODO: ioexception
+                error("attempt to read file that has been closed / not been opened")
+            end
+            local path = file.path
+            local startoffset = file.offset
 
-                return april.newInteger(-1)
+            local filecontents = ""
+            -- TODO: throw exception
+            pcall(function()
+                filecontents = natives.readFile(path)
+            end)
+            local contentsize = #filecontents
+
+            local read = 0
+            for i = 1, lengthv do
+                local pos = startoffset + i
+                if pos > contentsize then
+                    break
+                end
+
+                local char = filecontents:sub(pos, pos)
+                b.value.list[boffsetv + i] = april.newByte(string.byte(char))
+
+                read += 1
             end
 
-            print(fd, name)
-            error("unhandled fd (this is a shitty stub)")
+            file.offset = startoffset + read
+
+            -- local bytestr = {}
+            -- for k,v in b.value.list do
+            --     bytestr[k] = v.value
+            -- end
+            -- print("buffer after reading " .. read .. " bytes from " .. path .. ": " .. table.concat(bytestr, ','))
+
+            return april.newInteger(if read == 0 then -1 else read)
+        end,
+        ["available0-()I"] = function(this)
+            -- NOTE: this function is WRONG since we block on every single read :D
+
+            local file_input_stream_class = april.getClass("java/io/FileInputStream")
+            local file_descriptor_class = april.getClass("java/io/FileDescriptor")
+            local fdobj = this.value[file_input_stream_class.fields.fd].value
+            local fd = fdobj[file_descriptor_class.fields.fd].value
+
+            local file = fd_map[fd]
+            if not file then
+                -- TODO: ioexception
+                error("attempt to read file that has been closed / not been opened")
+            end
+            local path = file.path
+            local offset = file.offset
+
+            local filecontents = ""
+            -- TODO: throw exception
+            pcall(function()
+                filecontents = natives.readFile(path)
+            end)
+            local contentsize = #filecontents
+
+            local remaining = contentsize - offset
+            if remaining > 0 then
+                return april.newInteger(remaining)
+            end
+
+            return april.newInteger(0)
         end
     })
     natives.registerMethods("java/io/FileOutputStream", {

@@ -94,6 +94,59 @@ int outputClass(Class& _class, std::string& output) {
     indent(output);
     output.append("methodcache = {},\n");
 
+    Attribute* enclosing_method_attribute = nullptr;
+    Attribute* inner_classes_attribute = nullptr;
+    for (uint16_t j = 0; j < _class.attribute_count; j++) {
+        Attribute* attribute = &_class.attribute_list[j];
+        switch (attribute->name->Utf8.atom) {
+            case Atom_EnclosingMethod:
+                enclosing_method_attribute = attribute;
+                break;
+            case Atom_InnerClasses:
+                inner_classes_attribute = attribute;
+                break;
+            default:
+                break;
+        }
+    }
+
+    if (enclosing_method_attribute) {
+        indent(output);
+        output.append("enclosingmethod = { classname = \"");
+        output.insert(output.end(), enclosing_method_attribute->EnclosingMethod._class->Class.name->Utf8.bytes, enclosing_method_attribute->EnclosingMethod._class->Class.name->Utf8.bytes + enclosing_method_attribute->EnclosingMethod._class->Class.name->Utf8.bytes_size);
+        output.append("\"");
+        if (enclosing_method_attribute->EnclosingMethod.method) {
+            output.append(", methodname = \"");
+            output.insert(output.end(), enclosing_method_attribute->EnclosingMethod.method->NameAndType.name->Utf8.bytes, enclosing_method_attribute->EnclosingMethod.method->NameAndType.name->Utf8.bytes + enclosing_method_attribute->EnclosingMethod.method->NameAndType.name->Utf8.bytes_size);
+            output.append("\", methodtype = \"");
+            output.insert(output.end(), enclosing_method_attribute->EnclosingMethod.method->NameAndType.descriptor->Utf8.bytes, enclosing_method_attribute->EnclosingMethod.method->NameAndType.descriptor->Utf8.bytes + enclosing_method_attribute->EnclosingMethod.method->NameAndType.descriptor->Utf8.bytes_size);
+            output.append("\"");
+        }
+        output.append(" },\n");
+    }
+    if (inner_classes_attribute) {
+        indent(output);
+        output.append("innerclasses = {\n");
+        addIndent();
+
+        for (size_t i = 0; i < inner_classes_attribute->InnerClasses.count; i++) {
+            InnerClass& inner_class = inner_classes_attribute->InnerClasses.list[i];
+
+            indent(output);
+            output.append("{ innerclassname = \"");
+            output.insert(output.end(), inner_class.inner_class->Class.name->Utf8.bytes, inner_class.inner_class->Class.name->Utf8.bytes + inner_class.inner_class->Class.name->Utf8.bytes_size);
+            output.append("\", outerclassname = \"");
+            output.insert(output.end(), inner_class.outer_class->Class.name->Utf8.bytes, inner_class.outer_class->Class.name->Utf8.bytes + inner_class.outer_class->Class.name->Utf8.bytes_size);
+            output.append("\", inner_flags = ")
+                .append(std::to_string(inner_class.inner_access_flags))
+                .append(" },\n");
+        }
+
+        subIndent();
+        indent(output);
+        output.append("},\n");
+    }
+
     indent(output);
     output.append("fields = {\n");
     addIndent();
@@ -2022,7 +2075,7 @@ int outputClass(Class& _class, std::string& output) {
 
                             if (disable_codegen_asserts == 0) {
                                 indent(output);
-                                output.append("assert(value.tag == \"integer\", \"invalid value (not integer type) at the top of the stack in castore instruction; \" .. value.tag)\n");
+                                output.append("assert(april.intValue(value), \"value in castore was not an integer\")\n");
                                 indent(output);
                                 output.append("assert(index.tag == \"integer\", \"invalid value (not integer) for index in castore instruction; \" .. index.tag)\n");
                                 indent(output);
@@ -2038,7 +2091,7 @@ int outputClass(Class& _class, std::string& output) {
                             }
 
                             indent(output);
-                            output.append("array.value.list[index.value + 1] = april.coerce(value, descriptor_parser.parseFieldDescriptor('I'))\n");
+                            output.append("array.value.list[index.value + 1] = april.coerce(value, array.value.class.valuedescriptor)\n");
 
                             SETPC
                         OPCONDITIONAL(0x56, sastore)
@@ -3704,7 +3757,7 @@ int outputClass(Class& _class, std::string& output) {
                             }
 
                             indent(output);
-                            output.append("if value1int <= value2int then\n");
+                            output.append("if value1int < value2int then\n");
                             addIndent();
 
                             indent(output);
@@ -4672,8 +4725,14 @@ int outputClass(Class& _class, std::string& output) {
                                 return 1;
                             }
                             Constant& constant = _class.constant_pool[index - 1];
+                            if (constant.tag != ConstantType::InvokeDynamic) {
+                                std::cerr << "[ERROR]: expected InvokeDynamic for invokedynamic instruction #" << old_pc << "'s tag but got " << constant_type_names.at(constant.tag) << std::endl;
+                                return 1;
+                            }
 
                             pc += 2; // skip two funny bytes
+
+                            
 
                             indent(output);
                             output.append("error(\"TODO: invokedynamic instruction\")\n");

@@ -138,10 +138,9 @@ int main(int argc, char** argv) {
 
             int classret = readClassFile(file, _class);
             int luauret = 1;
-            if (!classret) {
+            if (!classret)
                 luauret = generateLuau(_class, output);
-                destroyClass(_class);
-            }
+            destroyClass(_class);
 
             if (april_logging_enabled)
                 std::cout << "did the file: " << pair.first << std::endl;

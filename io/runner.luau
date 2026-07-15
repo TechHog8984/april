@@ -43,6 +43,14 @@ do
     main_class = argv[main_class_i]
 end
 
+natives.runProcess = runtimelayer.runProcess
+natives.isFile = runtimelayer.isFile
+natives.isDir = runtimelayer.isDir
+natives.fileExists = runtimelayer.fileExists
+natives.readFile = runtimelayer.readFile
+natives.setJavaHome((assert(runtimelayer.env.JAVA_HOME, "no JAVA_HOME environment variable")))
+natives.setJavaLibraryPath("/media/Documents/cpp/april/io")
+
 natives.registerDefault()
 natives.registerMethods("tech/hog/a", {
     ["nativeTest-()D"] = function(...)

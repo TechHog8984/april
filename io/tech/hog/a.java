@@ -39,9 +39,15 @@ class a {
   private static float numfield4 = -14.0036f;
   // ldc2_w
   private static long numfield5 = 5213798342598754414L;
+
+  // for EnclosingMethod
+  static Object o = new Object() {
+  };
+
   public static void main(String[] args) {
     // invokevirtual, getstatic
     System.out.println("Hello, world!");
+    System.out.println(o);
     // iconst_0
     System.out.println(0);
     // lconst_0

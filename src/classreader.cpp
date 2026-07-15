@@ -234,7 +234,91 @@ int readAttributeList(std::istream& classfile, uint16_t& attribute_count, Attrib
                 }
                 break;
             case Atom_InnerClasses:
-                classfile.ignore(attribute.length);
+                attribute.InnerClasses.count = readu2(classfile);
+                if (april_logging_enabled)
+                    std::cout << "          count: " << attribute.InnerClasses.count << std::endl;
+
+                attribute.InnerClasses.list = new InnerClass[attribute.InnerClasses.count];
+                std::memset(attribute.InnerClasses.list, 0, sizeof(InnerClass) * attribute.InnerClasses.count);
+
+                if (april_logging_enabled)
+                    std::cout << "          list: " << std::endl;
+                for (uint32_t j = 0; j < attribute.InnerClasses.count; j++) {
+                    InnerClass& inner_class = attribute.InnerClasses.list[j];
+
+                    inner_class.inner_class_index = readu2(classfile);
+                    if (inner_class.inner_class_index < 1 || inner_class.inner_class_index > constant_pool_count) {
+                        std::cerr << "[ERROR]: attribute #" << j << "'s inner class index was out of bounds" << std::endl;
+                        return 1;
+                    }
+                    inner_class.inner_class = &constant_pool[inner_class.inner_class_index - 1];
+                    if (inner_class.inner_class->tag != ConstantType::Class) {
+                        std::cerr << "[ERROR]: expected Class for attribute #" << j << "'s inner class tag but got " << constant_type_names.at(inner_class.inner_class->tag) << std::endl;
+                        return 1;
+                    }
+
+                    if (april_logging_enabled)
+                        std::cout << "            inner_class: " << utf8Tostring(inner_class.inner_class->Class.name->Utf8) << std::endl;
+
+                    inner_class.outer_class_index = readu2(classfile);
+                    if (inner_class.outer_class_index) {
+                        if (inner_class.outer_class_index < 1 || inner_class.outer_class_index > constant_pool_count) {
+                            std::cerr << "[ERROR]: attribute #" << j << "'s outer class index was out of bounds" << std::endl;
+                            return 1;
+                        }
+                        inner_class.outer_class = &constant_pool[inner_class.outer_class_index - 1];
+                        if (inner_class.outer_class->tag != ConstantType::Class) {
+                            std::cerr << "[ERROR]: expected Class for attribute #" << j << "'s outer class tag but got " << constant_type_names.at(inner_class.outer_class->tag) << std::endl;
+                            return 1;
+                        }
+
+                        if (april_logging_enabled)
+                            std::cout << "            outer_class: " << utf8Tostring(inner_class.outer_class->Class.name->Utf8) << std::endl;
+                    } else if (april_logging_enabled)
+                        std::cout << "            outer_class: [none]" << std::endl;
+
+                    inner_class.inner_name_index = readu2(classfile);
+                    if (inner_class.inner_name_index) {
+                        if (inner_class.inner_name_index < 1 || inner_class.inner_name_index > constant_pool_count) {
+                            std::cerr << "[ERROR]: attribute #" << j << "'s inner name index was out of bounds" << std::endl;
+                            return 1;
+                        }
+                        inner_class.inner_name = &constant_pool[inner_class.inner_name_index - 1];
+                        if (inner_class.inner_name->tag != ConstantType::Utf8) {
+                            std::cerr << "[ERROR]: expected Utf8 for attribute #" << j << "'s inner name tag but got " << constant_type_names.at(inner_class.inner_name->tag) << std::endl;
+                            return 1;
+                        }
+
+                        if (april_logging_enabled)
+                            std::cout << "            inner_class_name: " << utf8Tostring(inner_class.inner_name->Utf8) << std::endl;
+                    } else if (april_logging_enabled)
+                        std::cout << "            inner_class_name: [none]" << std::endl;
+
+                    inner_class.inner_access_flags = readu2(classfile);
+                    if (april_logging_enabled) {
+                        std::cout << "            access flags: " << inner_class.inner_access_flags << " (";
+
+                        if (inner_class.inner_access_flags & CLASS_ACC_PUBLIC)
+                            std::cout << "PUBLIC, ";
+                        if (inner_class.inner_access_flags & CLASS_ACC_FINAL)
+                            std::cout << "FINAL, ";
+                        if (inner_class.inner_access_flags & CLASS_ACC_SUPER)
+                            std::cout << "SUPER, ";
+                        if (inner_class.inner_access_flags & CLASS_ACC_INTERFACE)
+                            std::cout << "INTERFACE, ";
+                        if (inner_class.inner_access_flags & CLASS_ACC_ABSTRACT)
+                            std::cout << "ABSTRACT, ";
+                        if (inner_class.inner_access_flags & CLASS_ACC_SYNTHETIC)
+                            std::cout << "SYNTHETIC, ";
+                        if (inner_class.inner_access_flags & CLASS_ACC_ANNOTATION)
+                            std::cout << "ANNOTATION, ";
+                        if (inner_class.inner_access_flags & CLASS_ACC_ENUM)
+                            std::cout << "ENUM, ";
+
+                        std::cout << ')' << std::endl;
+                    }
+                }
+
                 break;
             case Atom_EnclosingMethod:
                 attribute.EnclosingMethod.class_index = readu2(classfile);
@@ -442,6 +526,9 @@ int readAttributeList(std::istream& classfile, uint16_t& attribute_count, Attrib
                         return 1;
                     }
 
+                    if (april_logging_enabled)
+                        std::cout << "              method_ref reference_index: " << bootstrap_method.method_ref->MethodHandle.reference_index << std::endl;
+
                     bootstrap_method.arg_count = readu2(classfile);
                     if (april_logging_enabled)
                         std::cout << "              arg_count: " << bootstrap_method.arg_count << std::endl;
@@ -507,9 +594,29 @@ void deleteAttribute(Attribute& attribute) {
                 delete[] attribute.Code.attribute_list;
             }
             break;
+        case Atom_Exceptions:
+            if (attribute.Exceptions.exception_list)
+                delete[] attribute.Exceptions.exception_list;
+            break;
+        case Atom_InnerClasses:
+            if (attribute.InnerClasses.list)
+                delete[] attribute.InnerClasses.list;
+            break;
         case Atom_LineNumberTable:
             if (attribute.LineNumberTable.list)
                 delete[] attribute.LineNumberTable.list;
+            break;
+        case Atom_LocalVariableTable:
+            if (attribute.LocalVariableTable.list)
+                delete[] attribute.LocalVariableTable.list;
+            break;
+        case Atom_BootstrapMethods:
+            if (attribute.BootstrapMethods.bootstrap_method_list) {
+                for (uint16_t i = 0; i < attribute.BootstrapMethods.bootstrap_method_count; i++)
+                    if (attribute.BootstrapMethods.bootstrap_method_list[i].arg_list)
+                        delete[] attribute.BootstrapMethods.bootstrap_method_list[i].arg_list;
+                delete[] attribute.BootstrapMethods.bootstrap_method_list;
+            }
             break;
         default:
             break;
@@ -520,7 +627,7 @@ int readClassFile(std::istream& classfile, Class &_class) {
     uint32_t magic = readu4(classfile);
     if (magic != 0xCAFEBABE) {
         std::cerr << "[ERROR]: invalid magic item; expected 0xCAFEBABE but got " << std::format("{:#X}", magic) << std::endl;
-        exit(1);
+        return 1;
     }
     if (april_logging_enabled)
         std::cout << "magic: " << std::format("{:#X}", magic) << std::endl;
@@ -548,7 +655,7 @@ int readClassFile(std::istream& classfile, Class &_class) {
             return 1;
         }
         if (april_logging_enabled)
-            std::cout << "  " << i << " - tag: " << int(tag) << " (" << tag_name->second << ')' << std::endl;
+            std::cout << "  " << (i + 1) << " - tag: " << int(tag) << " (" << tag_name->second << ')' << std::endl;
 
         Constant& constant = _class.constant_pool[i];
         constant.tag = tag;
@@ -692,7 +799,7 @@ int readClassFile(std::istream& classfile, Class &_class) {
                 constant.MethodHandle.reference_kind = readu1(classfile);
                 constant.MethodHandle.reference_index = readu2(classfile);
                 if (april_logging_enabled) {
-                    std::cout << "    reference_kind = " << constant.MethodHandle.reference_kind << std::endl;
+                    std::cout << "    reference_kind = " << (int) constant.MethodHandle.reference_kind << std::endl;
                     std::cout << "    reference_index = " << constant.MethodHandle.reference_index << std::endl;
                 }
                 break;
@@ -1252,12 +1359,14 @@ int readClassFile(std::istream& classfile, Class &_class) {
 }
 
 void destroyClass(Class& _class) {
-    for (uint16_t i = 0; i < _class.constant_pool_count; i++) {
-        Constant& constant = _class.constant_pool[i];
-        if (constant.tag == ConstantType::Utf8)
-            delete[] constant.Utf8.bytes;
+    if (_class.constant_pool) {
+        for (uint16_t i = 0; i < _class.constant_pool_count; i++) {
+            Constant& constant = _class.constant_pool[i];
+            if (constant.tag == ConstantType::Utf8 && constant.Utf8.bytes)
+                delete[] constant.Utf8.bytes;
+        }
+        delete[] _class.constant_pool;
     }
-    delete[] _class.constant_pool;
     if (_class.interface_list)
         delete[] _class.interface_list;
     if (_class.field_list) {

@@ -17,13 +17,13 @@ local is_lute = false
 local lutefs
 local luteprocess
 local luteio
--- local lutestdfs
+local lutestdfs
 -- local luteluau
 pcall(function()
     lutefs = require("@lute/fs")
     luteprocess = require("@lute/process")
     luteio = require("@lute/io")
-    -- lutestdfs = require("@std/fs")
+    lutestdfs = require("@std/fs")
     -- luteluau = require("@lute/luau")
     is_lute = true
 end)
@@ -51,10 +51,18 @@ local listDir = if lunefs then lunefs.readDir else function(path)
 
     return list
 end
--- local readFile = if lunefs then lunefs.readFile else lutestdfs.readFileToString
 local isFile = if lunefs then lunefs.isFile else function(path)
     return lutefs.exists(path) and lutefs.type(path) == "file"
 end
+local isDir = if lunefs then lunefs.isDir else function(path)
+    return lutefs.exists(path) and lutefs.type(path) == "dir"
+end
+local fileExists = if lunefs then function(path)
+    return isFile(path) or isDir(path)
+end else lutefs.exists
+local readFile = if lunefs then lunefs.readFile else lutestdfs.readFileToString
+
+local env = (luneprocess or luteprocess).env
 
 -- TODO: when lute has stderr, use it
 local stderrWrite = if lunestdio then lunestdio.ewrite else luteio.write
@@ -65,10 +73,25 @@ local function panic(message)
     processExit(1)
 end
 
+local runProcess = if luneprocess then luneprocess.exec else function(exe, args)
+    local argc = #args
+    local realargs = table.create(argc + 1)
+    realargs[1] = exe
+    for i = 1, argc do
+        realargs[i + 1] = args[i]
+    end
+
+    return luteprocess.run(realargs)
+end
+
 return {
     getProcessArgs = getProcessArgs,
     listDir = listDir,
-    -- readFile = readFile,
     isFile = isFile,
+    isDir = isDir,
+    fileExists = fileExists,
+    readFile = readFile,
+    env = env,
     panic = panic,
+    runProcess = runProcess
 }
