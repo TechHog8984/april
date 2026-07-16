@@ -535,6 +535,15 @@ function natives.registerDefault()
                 return april.newBoolean(threadinfo[this.value].alive)
             end
             dict["start0-()V"] = function(this)
+                do
+                    local name = this.value.class.name
+                    -- ds is thread that just calls sleep indefinitely; dr is the one that reads System.in indefinitely
+                    if name == "ds" or name == "dr" then
+                        print("warning: start0 called on a '" .. name .. "' thread, so doing nothing")
+                        return
+                    end
+                end
+
                 -- print("STARTING A THREAD", debug.traceback())
                 threadinfo[this.value].alive = true
 
@@ -545,6 +554,20 @@ function natives.registerDefault()
                 end)()
                 -- error"aight just spawned it"
             end
+            -- NOTE: commented because the class it was used in im disabling so i want to test in a real case before enabling
+            -- dict["sleep-(J)V"] = function(milliseconds)
+            --     -- FIXME: we stall right now because i am concerned about yielding and resuming the thread given how monitors work (i think it doesnt matter but i will still do this approach for now)
+            --     local duration = milliseconds.value
+            --     local starttimems = os.clock() * 1000
+            --     while true do
+            --         local elapsedms = (os.clock() * 1000) - starttimems
+            --         -- print("ms elapsed", elapsedms)
+            --         -- print("duration", duration)
+            --         if elapsedms >= duration then
+            --             break
+            --         end
+            --     end
+            -- end
         end
     })
 
@@ -1031,6 +1054,15 @@ function natives.registerDefault()
         end
     })
 
+    natives.registerMethods("java/lang/reflect/Array", {
+        ["newArray-(Ljava/lang/Class;I)Ljava/lang/Object;"] = function(component_type, length)
+            local component_class = component_type.value.classclass
+            local array = april.newArrayFromClass(component_class, length.value)
+
+            return april.newReference(array)
+        end
+    })
+
     local byte_newline = string.byte('\n')
     local stdout_buffer = table.create(256)
     local function writeStdoutBytes(data, start, count)
@@ -1112,6 +1144,14 @@ function natives.registerDefault()
             local file = fd_map[fd]
             if not file then
                 -- TODO: ioexception
+
+                -- local fd_in = file_descriptor_class.staticinstance[file_descriptor_class.fields["in"]].value
+                -- if fdobj == fd_in then
+                --     print("reading from System.in...")
+                --     return april.newInteger(0)
+                -- end
+
+                print("FD", fd)
                 error("attempt to read file that has been closed / not been opened")
             end
             local path = file.path
@@ -1119,9 +1159,11 @@ function natives.registerDefault()
 
             local filecontents = ""
             -- TODO: throw exception
-            pcall(function()
+            if not (pcall(function()
                 filecontents = natives.readFile(path)
-            end)
+            end)) then
+                print("warning: FAILED TO OPEN FILE " .. tostring(path))
+            end
             local contentsize = #filecontents
 
             local read = 0
@@ -1328,6 +1370,26 @@ function natives.registerDefault()
     natives.registerMethods("sun/misc/URLClassPath", {
         ["getLookupCacheURLs-(Ljava/lang/ClassLoader;)[Ljava/net/URL;"] = function(loader)
             -- TODO: we could probably do this pretty easily since we do actually keep a cache, im just not doing it cuz im lazy (also we have to take into account the ClassLoader...)
+            return april.newReference()
+        end
+    })
+
+    natives.registerMethods("java/util/TimeZone", {
+        ["getSystemTimeZoneID-(Ljava/lang/String;)Ljava/lang/String;"] = function(javahome)
+            -- TODO: get user actual timezone
+            return april.newString("EST");
+        end
+    })
+
+    natives.registerMethods("AprilClassLoader", {
+        ["getParentPath-()Ljava/lang/String;"] = function(this)
+            local class = rawget(this, "assignedclass")
+
+            local parent_path = class.jarparentpath
+            if parent_path then
+                return april.newString(parent_path)
+            end
+
             return april.newReference()
         end
     })

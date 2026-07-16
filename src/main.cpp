@@ -116,6 +116,8 @@ int main(int argc, char** argv) {
         path.reserve(strlen(output_folder_path) + 20);
         std::string folderpath;
         folderpath.reserve(path.capacity());
+        std::string parentpath;
+        parentpath.reserve(folderpath.capacity());
 
         for (const auto& pair : *map) {
             Class _class;
@@ -132,14 +134,25 @@ int main(int argc, char** argv) {
             if (april_logging_enabled)
                 std::cout << "doing the file: " << pair.first << std::endl;
 
-            // int ret = readClassFile(file, _class);
-            // if (!ret)
-            //     ret = generateLuau(_class, output);
+            path.assign(output_folder_path);
+            path.push_back('/');
+            path.append(pair.first);
+
+            folderpath.assign(path);
+            auto pos = folderpath.rfind('/');
+            if (pos == std::string::npos) {
+                std::cerr << "[ERROR]: invalid folder path '" << folderpath << '\'' << std::endl;
+                exit(1);
+            }
+            folderpath.erase(pos);
 
             int classret = readClassFile(file, _class);
             int luauret = 1;
-            if (!classret)
-                luauret = generateLuau(_class, output);
+            if (!classret) {
+                parentpath.assign(folderpath);
+                parentpath.erase(0, strlen(output_folder_path) + 1);
+                luauret = generateLuau(_class, output, parentpath);
+            }
             destroyClass(_class);
 
             if (april_logging_enabled)
@@ -148,18 +161,7 @@ int main(int argc, char** argv) {
             if (classret)
                 break;
 
-            path.assign(output_folder_path);
-            path.push_back('/');
-            path.append(pair.first);
-
             {
-            folderpath.assign(path);
-            auto pos = folderpath.rfind('/');
-            if (pos == std::string::npos) {
-                std::cerr << "[ERROR]: invalid folder path '" << folderpath << '\'' << std::endl;
-                exit(1);
-            }
-            folderpath.erase(pos);
             std::error_code ec;
             std::filesystem::create_directories(folderpath, ec);
             if (ec) {

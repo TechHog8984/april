@@ -541,6 +541,15 @@ function april.newArray(valuetype, size)
 
     return object
 end
+function april.newArrayFromClass(class, size)
+    if class.isprimitive then
+        return april.newArray(class.name, size)
+    elseif class.isarray then
+        return april.newArray('[' .. class.valuedescriptor.raw, size)
+    end
+
+    return april.newArray('L' .. class.name .. ';', size)
+end
 
 function april.newStringFromLuaCharArray(array: { number }): JavaReference
     local count = #array
@@ -553,19 +562,19 @@ function april.newStringFromLuaCharArray(array: { number }): JavaReference
 
             if bit32.band(b, 0x80) == 0 then
                 n += 1
-                newarray[n] = b;
+                newarray[n] = b
             elseif bit32.band(b, 0xE0) == 0xC0 then
                 i += 1
                 local b2 = assert(array[i], "invalid utf8")
                 n += 1
-                newarray[n] = bit32.bor(bit32.lshift(bit32.band(b, 0x1F), 6), bit32.band(b2, 0x3F));
+                newarray[n] = bit32.bor(bit32.lshift(bit32.band(b, 0x1F), 6), bit32.band(b2, 0x3F))
             else
                 i += 1
                 local b2 = assert(array[i], "invalid utf8")
                 i += 1
                 local b3 = assert(array[i], "invalid utf8")
                 n += 1
-                newarray[n] = bit32.bor(bit32.lshift(bit32.band(b, 0x0F), 12), bit32.lshift(bit32.band(b2, 0x3F), 6), bit32.band(b3, 0x3F));
+                newarray[n] = bit32.bor(bit32.lshift(bit32.band(b, 0x0F), 12), bit32.lshift(bit32.band(b2, 0x3F), 6), bit32.band(b3, 0x3F))
             end
 
             i += 1
@@ -624,7 +633,16 @@ function april.nextSlot()
 end
 
 local function assignClassObject(class)
-    local classobject = april.newObject(april.getClass("java/lang/Class"))
+    local class_class = april.getClass("java/lang/Class")
+    local classobject = april.newObject(class_class)
+
+    local classloader = april.getClassLoader and april.getClassLoader(class)
+    if classloader then
+        local ref = april.newReference(classloader)
+        rawset(ref, "assignedclass", class)
+        classobject[class_class.fields.classLoader] = ref
+    end
+
     classobject.classclass = class
     class.classobject = classobject
 end
@@ -1080,7 +1098,7 @@ function april.instanceofByClassAndTargetClass(class: any, targetclass: any)
         if targetclass.isinterface then
             return targetclass == class or april.hasSuperInterface(class, targetclass)
         else
-            return targetclass == april.getClass("java/lang/Object");
+            return targetclass == april.getClass("java/lang/Object")
         end
     elseif class.isarray then
         if targetclass.isinterface then
@@ -1107,7 +1125,7 @@ function april.instanceofByClassAndTargetClass(class: any, targetclass: any)
                 end
             end
         else
-            return targetclass == april.getClass("java/lang/Object");
+            return targetclass == april.getClass("java/lang/Object")
         end
     else
         if targetclass.isinterface then

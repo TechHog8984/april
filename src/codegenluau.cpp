@@ -20,7 +20,33 @@ inline void indent(std::string& output) {
         output.append("    ");
 }
 
-int outputClass(Class& _class, std::string& output) {
+int generateLuau(Class& _class, std::string& output, std::optional<std::string_view> jar_parent_path) {
+    Attribute* sourcefile = nullptr;
+    for (uint16_t i = 0; i < _class.attribute_count; i++) {
+        Attribute* attribute = &_class.attribute_list[i];
+        if (attribute->name->Utf8.atom == Atom_SourceFile) {
+            sourcefile = attribute;
+            break;
+        }
+    }
+
+    output.append("--!optimize 2\n");
+    output.append("--[[\n    this file was generated via april by techhog\n    see https://github.com/TechHog8984/april for more information\n    \n");
+    if (sourcefile) {
+        output.append("    file: ");
+        output.insert(output.end(), sourcefile->SourceFile.sourcefile->Utf8.bytes, sourcefile->SourceFile.sourcefile->Utf8.bytes + sourcefile->SourceFile.sourcefile->Utf8.bytes_size);
+        output.push_back('\n');
+    }
+
+    output.append("]]\n");
+
+    output.append("assert(coroutine.isyieldable(), \"april needs to be ran in a yieldable thread\")\n");
+
+    // TODO: cli option (something like requiremode=shared or target=roblox etc) to not hardcode this way of getting april, natives, etc
+    output.append("local april = require(\"@april/april\")\n")
+        .append("local descriptor_parser = require(\"@april/descriptor\")\n")
+        .append("local natives = require(\"@april/natives\")\n");
+
     size_t class_name_index = class_name_counter;
 
     std::string class_local("class_");
@@ -51,6 +77,13 @@ int outputClass(Class& _class, std::string& output) {
         output.push_back(c);
     }
     output.append("\",\n");
+
+    if (jar_parent_path) {
+        indent(output);
+        output.append("jarparentpath = \"")
+            .append(*jar_parent_path)
+            .append("\",\n");
+    }
 
     indent(output);
     output.append("hasloaded = false,\n");
@@ -135,9 +168,13 @@ int outputClass(Class& _class, std::string& output) {
             indent(output);
             output.append("{ innerclassname = \"");
             output.insert(output.end(), inner_class.inner_class->Class.name->Utf8.bytes, inner_class.inner_class->Class.name->Utf8.bytes + inner_class.inner_class->Class.name->Utf8.bytes_size);
-            output.append("\", outerclassname = \"");
-            output.insert(output.end(), inner_class.outer_class->Class.name->Utf8.bytes, inner_class.outer_class->Class.name->Utf8.bytes + inner_class.outer_class->Class.name->Utf8.bytes_size);
-            output.append("\", inner_flags = ")
+            output.append("\", ");
+            if (inner_class.outer_class) {
+                output.append("outerclassname = \"");
+                output.insert(output.end(), inner_class.outer_class->Class.name->Utf8.bytes, inner_class.outer_class->Class.name->Utf8.bytes + inner_class.outer_class->Class.name->Utf8.bytes_size);
+                output.append("\", ");
+            }
+            output.append("inner_flags = ")
                 .append(std::to_string(inner_class.inner_access_flags))
                 .append(" },\n");
         }
@@ -454,6 +491,7 @@ int outputClass(Class& _class, std::string& output) {
                         return std::string(" -- name: ").append(utf8Tostring(*name));
                     };
 
+                    // TODO: to prevent calling  getClass and index the method each time, the table we add to the callstack should be created once at the beginning of the function and then reused
                     auto incCallStack = [&output, &class_name, &class_local, &method_index]() {
                         indent(output);
                         output.append("do\n");
@@ -1532,9 +1570,12 @@ int outputClass(Class& _class, std::string& output) {
                             indent(output);
                             output.append("local array = pop()\n");
 
+                            indent(output);
+                            output.append("local indexint = april.intValue(index)\n");
+
                             if (disable_codegen_asserts == 0) {
                                 indent(output);
-                                output.append("assert(index.tag == \"integer\", \"invalid value (not integer type) for index in aaload instruction; \" .. index.tag)\n");
+                                output.append("assert(indexint, \"invalid value (not integer type) for index in aaload instruction; \" .. index.tag)\n");
                                 indent(output);
                                 output.append("assert(array.tag == \"reference\", \"invalid value (not reference type) for array in aaload instruction; \" .. array.tag)\n");
                                 indent(output);
@@ -1544,11 +1585,11 @@ int outputClass(Class& _class, std::string& output) {
 
                                 // TODO: outofbounds exception
                                 indent(output);
-                                output.append("assert(index.value >= 0 and index.value < array.value.size, \"out of bounds\")\n");
+                                output.append("assert(index.value >= 0 and indexint < array.value.size, \"out of bounds\")\n");
                             }
 
                             indent(output);
-                            output.append("store(stack, april.clone(array.value.list[index.value + 1]))\n");
+                            output.append("store(stack, april.clone(array.value.list[indexint + 1]))\n");
 
                             SETPC
                         OPCONDITIONAL(0x33, baload)
@@ -1898,7 +1939,7 @@ int outputClass(Class& _class, std::string& output) {
 
                             if (disable_codegen_asserts == 0) {
                                 indent(output);
-                                output.append("assert(value.tag == \"integer\", \"invalid value (not integer type) at the top of the stack in iastore instruction; \" .. value.tag)\n");
+                                output.append("assert(april.intValue(value), \"invalid value (not integer type) for value in iastore instruction; \" .. value.tag)\n");
                                 indent(output);
                                 output.append("assert(index.tag == \"integer\", \"invalid value (not integer) for index in iastore instruction; \" .. index.tag)\n");
                                 indent(output);
@@ -1914,7 +1955,7 @@ int outputClass(Class& _class, std::string& output) {
                             }
 
                             indent(output);
-                            output.append("array.value.list[index.value + 1] = april.clone(value)\n");
+                            output.append("array.value.list[index.value + 1] = april.coerce(value, descriptor_parser.parseFieldDescriptor('I'))\n");
 
                             SETPC
                         OPCONDITIONAL(0x50, lastore)
@@ -2046,7 +2087,7 @@ int outputClass(Class& _class, std::string& output) {
 
                             if (disable_codegen_asserts == 0) {
                                 indent(output);
-                                output.append("assert(value.tag == \"integer\", \"invalid value (not integer type) at the top of the stack in bastore instruction; \" .. value.tag)\n");
+                                output.append("assert(april.intValue(value), \"invalid value (not integer type) at the top of the stack in bastore instruction; \" .. value.tag)\n");
                                 indent(output);
                                 output.append("assert(index.tag == \"integer\", \"invalid value (not integer) for index in bastore instruction; \" .. index.tag)\n");
                                 indent(output);
@@ -4096,9 +4137,11 @@ int outputClass(Class& _class, std::string& output) {
 
                             indent(output);
                             output.append("local key = pop()\n");
+                            indent(output);
+                            output.append("local keyint = april.intValue(key)\n");
                             if (disable_codegen_asserts == 0) {
                                 indent(output);
-                                output.append("assert(key.tag == \"integer\", \"invalid value (not integer type) for key in lookupswitch instruction; \" .. key.tag)\n");
+                                output.append("assert(keyint, \"invalid value (not integer type) for key in lookupswitch instruction; \" .. key.tag)\n");
                             }
 
                             // TODO: optimize (use binary search)
@@ -4114,7 +4157,7 @@ int outputClass(Class& _class, std::string& output) {
                                 }
 
                                 indent(output);
-                                output.append("if key.value == ")
+                                output.append("if keyint == ")
                                     .append(std::to_string(match))
                                     .append("  then\n");
                                 addIndent();
@@ -4762,13 +4805,15 @@ int outputClass(Class& _class, std::string& output) {
 
                             indent(output);
                             output.append("local count = pop()\n");
+                            indent(output);
+                            output.append("local countint = april.intValue(count)\n");
                             if (disable_codegen_asserts == 0) {
                                 indent(output);
-                                output.append("assert(count.tag == \"integer\", \"value in newarray was not an integer\")\n");
+                                output.append("assert(countint, \"value in newarray was not an integer\")\n");
 
                                 // TODO: exceptions
                                 indent(output);
-                                output.append("assert(count.value >= 0)\n");
+                                output.append("assert(countint >= 0)\n");
                             }
 
                             indent(output);
@@ -4808,7 +4853,7 @@ int outputClass(Class& _class, std::string& output) {
                             output.append("\"\n");
 
                             indent(output);
-                            output.append("store(stack, april.newReference(april.newArray(atype, count.value)))\n");
+                            output.append("store(stack, april.newReference(april.newArray(atype, countint)))\n");
 
                             SETPC
                         OPCONDITIONAL(0xbd, anewarray)
@@ -5433,38 +5478,6 @@ int outputClass(Class& _class, std::string& output) {
     output.append("\nreturn class_")
         .append(std::to_string(class_name_index))
         .push_back('\n');
-
-    return 0;
-}
-int generateLuau(Class& _class, std::string& output) {
-    Attribute* sourcefile = nullptr;
-    for (uint16_t i = 0; i < _class.attribute_count; i++) {
-        Attribute* attribute = &_class.attribute_list[i];
-        if (attribute->name->Utf8.atom == Atom_SourceFile) {
-            sourcefile = attribute;
-            break;
-        }
-    }
-
-    output.append("--!optimize 2\n");
-    output.append("--[[\n    this file was generated via april by techhog\n    see https://github.com/TechHog8984/april for more information\n    \n");
-    if (sourcefile) {
-        output.append("    file: ");
-        output.insert(output.end(), sourcefile->SourceFile.sourcefile->Utf8.bytes, sourcefile->SourceFile.sourcefile->Utf8.bytes + sourcefile->SourceFile.sourcefile->Utf8.bytes_size);
-        output.push_back('\n');
-    }
-
-    output.append("]]\n");
-
-    output.append("assert(coroutine.isyieldable(), \"april needs to be ran in a yieldable thread\")\n");
-
-    // TODO: cli option (something like requiremode=shared or target=roblox etc) to not hardcode this way of getting april, natives, etc
-    output.append("local april = require(\"@april/april\")\n")
-        .append("local descriptor_parser = require(\"@april/descriptor\")\n")
-        .append("local natives = require(\"@april/natives\")\n");
-
-    if (outputClass(_class, output))
-        return 1;
 
     if (!output.empty())
         output.erase(output.size() - 1, 1);
