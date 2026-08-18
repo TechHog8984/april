@@ -468,19 +468,21 @@ function natives.registerDefault()
                 --     dest.value.list[destpos.value + i] = april.clone(src.value.list[srcpos.value + i])
                 -- end
 
-                -- TODO: this is chatgpt... please read it and understand what it's doing
                 local s = srcpos.value
                 local d = destpos.value
                 local n = length.value
 
-                if src == dest and d > s then
-                    for i = n, 1, -1 do
-                        dest.value.list[d + i] = april.clone(src.value.list[s + i])
-                    end
-                else
-                    for i = 1, n do
-                        dest.value.list[d + i] = april.clone(src.value.list[s + i])
-                    end
+                local srcvalue = src.value
+                local destvalue = dest.value
+
+                local from, to, step = 1, n, 1
+
+                if srcvalue == destvalue and d > s then
+                    from, to, step = n, 1, -1
+                end
+
+                for i = from, to, step do
+                    destvalue.list[d + i] = april.clone(srcvalue.list[s + i])
                 end
             end
             dict["initProperties-(Ljava/util/Properties;)Ljava/util/Properties;"] = function(properties)
