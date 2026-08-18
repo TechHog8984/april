@@ -61,6 +61,7 @@ local fileExists = if lunefs then function(path)
     return isFile(path) or isDir(path)
 end else lutefs.exists
 local readFile = if lunefs then lunefs.readFile else lutestdfs.readFileToString
+local writeFile = if lunefs then lunefs.writeFile else lutestdfs.writeStringToFile
 
 local env = (luneprocess or luteprocess).env
 
@@ -91,6 +92,7 @@ return {
     isDir = isDir,
     fileExists = fileExists,
     readFile = readFile,
+    writeFile = writeFile,
     env = env,
     panic = panic,
     runProcess = runProcess

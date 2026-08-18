@@ -60,6 +60,7 @@ natives.isFile = runtimelayer.isFile
 natives.isDir = runtimelayer.isDir
 natives.fileExists = runtimelayer.fileExists
 natives.readFile = runtimelayer.readFile
+natives.writeFile = runtimelayer.writeFile
 natives.setJavaHome((assert(runtimelayer.env.JAVA_HOME, "no JAVA_HOME environment variable")))
 natives.setJavaLibraryPath("/media/Documents/cpp/april/io")
 
