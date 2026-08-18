@@ -19,7 +19,10 @@ enum class ConstantType: uint8_t {
     Utf8 = 1,
     MethodHandle = 15,
     MethodType = 16,
-    InvokeDynamic = 18
+    InvokeDynamic = 18,
+
+    // custom
+    ConstantPatchObject = 100
 };
 static std::unordered_map<ConstantType, const char*> constant_type_names = {
     {ConstantType::Class, "Class"},
@@ -35,7 +38,9 @@ static std::unordered_map<ConstantType, const char*> constant_type_names = {
     {ConstantType::Utf8, "Utf8"},
     {ConstantType::MethodHandle, "MethodHandle"},
     {ConstantType::MethodType, "MethodType"},
-    {ConstantType::InvokeDynamic, "InvokeDynamic"}
+    {ConstantType::InvokeDynamic, "InvokeDynamic"},
+
+    {ConstantType::ConstantPatchObject, "ConstantPatchObject"}
 };
 
 enum class FloatingType {
@@ -68,6 +73,7 @@ struct Constant {
     ConstantType tag;
     union {
         struct {
+            // NOTE: do not trust name_index due to patches
             uint16_t name_index; Constant* name;
         } Class;
 
@@ -122,6 +128,10 @@ struct Constant {
             uint16_t bootstrap_method_index; BootstrapMethod* bootstrap_method;
             uint16_t name_and_type_index; Constant* name_and_type;
         } InvokeDynamic;
+
+        struct {
+            int index;
+        } ConstantPatchObject;
     };
 };
 
@@ -148,6 +158,18 @@ struct LocalVariable {
     uint16_t descriptor_index; Constant* descriptor;
     uint16_t index;
 };
+enum MethodHandleReferenceKind {
+    REF_getField = 1,
+    REF_getStatic,
+    REF_putField,
+    REF_putStatic,
+    REF_invokeVirtual,
+    REF_invokeStatic,
+    REF_invokeSpecial,
+    REF_newInvokeSpecial,
+    REF_invokeInterface
+};
+std::string methodHandleReferenceKindTostring(uint8_t kind);
 struct BootstrapMethod {
     uint16_t method_ref_index; Constant* method_ref;
     uint16_t arg_count;
@@ -321,6 +343,15 @@ struct Class {
     uint16_t attribute_count;
     Attribute* attribute_list;
 };
+
+struct ConstantPatch {
+    uint16_t index;
+    int list_index;
+};
+
+constexpr size_t CONSTANT_PATCH_MAX = 100;
+extern ConstantPatch constant_patches[CONSTANT_PATCH_MAX];
+extern size_t constant_patch_count;
 
 int readClassFile(std::istream& classfile, Class& _class);
 void destroyClass(Class& _class);

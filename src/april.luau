@@ -7,7 +7,9 @@ local april = {
     name_to_class_map = {},
     array_class_map = {},
     callstack = {},
-    hooks_newObject = {} :: any
+    hooks_newObject = {} :: any,
+    exception_thrown = nil,
+    constant_patch_objects = {}
 }
 
 export type JavaByte = {
@@ -219,6 +221,7 @@ function april.newStub(value: JavaLong | JavaDouble): JavaStub
         category1 = false
     }
 end
+-- TODO: april.newNull = () -> april.newReference().... call april.newNull instead and our code will be more readable
 function april.newReference(value: any): JavaReference
     return {
         tag = "reference",
@@ -528,6 +531,16 @@ function april.getDefault(descriptor: descriptor_parser.FieldDescriptor)
     return assert(value)
 end
 
+function april.getDescriptorFromClass(class)
+    if class.isprimitive then
+        return descriptor_parser.parseFieldDescriptor(class.name)
+    elseif class.isarray then
+        return descriptor_parser.parseFieldDescriptor('[' .. class.valuedescriptor.raw)
+    end
+
+    return descriptor_parser.parseFieldDescriptor('L' .. class.name .. ';')
+end
+
 function april.newArray(valuetype, size)
     local class, descriptor = april.getArrayClass('[' .. valuetype)
     local object = april.newObject(class)
@@ -542,13 +555,7 @@ function april.newArray(valuetype, size)
     return object
 end
 function april.newArrayFromClass(class, size)
-    if class.isprimitive then
-        return april.newArray(class.name, size)
-    elseif class.isarray then
-        return april.newArray('[' .. class.valuedescriptor.raw, size)
-    end
-
-    return april.newArray('L' .. class.name .. ';', size)
+    return april.newArray(april.getDescriptorFromClass(class).raw, size)
 end
 
 function april.newStringFromLuaCharArray(array: { number }): JavaReference
@@ -591,6 +598,7 @@ function april.newStringFromLuaCharArray(array: { number }): JavaReference
     local init = object.class.methods["<init>-([C)V"]
     local objectref = april.newReference(object)
     init.func(objectref, april.newReference(char_array))
+    april.checkException()
     return objectref
 end
 function april.newString(value: string): JavaReference
@@ -632,11 +640,16 @@ function april.nextSlot()
     return value
 end
 
+-- NOTE: override me!
+function april.getClassLoader(...): any
+    return
+end
+
 local function assignClassObject(class)
     local class_class = april.getClass("java/lang/Class")
     local classobject = april.newObject(class_class)
 
-    local classloader = april.getClassLoader and april.getClassLoader(class)
+    local classloader = april.getClassLoader(class)
     if classloader then
         local ref = april.newReference(classloader)
         rawset(ref, "assignedclass", class)
@@ -664,12 +677,14 @@ function april.findClass(classname)
     else
         class = april.fetchClass(classname)
 
-        if not class.classobject then
+        if class and not class.classobject then
             class.classobject = true -- don't recurse indefinitely
             assignClassObject(class)
         end
     end
-    april.name_to_class_map[classname] = class
+    if class then
+        april.name_to_class_map[classname] = class
+    end
 
     return class
 end
@@ -693,7 +708,7 @@ function april.getClassFromDescriptor(descriptor: descriptor_parser.FieldDescrip
 
     return april.getClass(classname)
 end
-function april.loadClass(class)
+function april.loadClass(class, initialclassoverride: unknown)
     if class.hasloaded then
         return class
     end
@@ -705,13 +720,13 @@ function april.loadClass(class)
         superclassname = superclass.superclass
     end
 
-    -- FIXME: set field values via ConstantValue attributes if present
     local staticinstance = april.newObject(class, true)
     class.staticinstance = staticinstance
 
     local clinit = class.methods["<clinit>-()V"]
     if clinit then
         clinit.func()
+        april.checkException()
     end
 
     return class
@@ -720,37 +735,66 @@ function april.loadClassByName(classname)
     return april.loadClass(april.getClass(classname))
 end
 
-function april.getPrimitiveClass(name)
-    assert(name == "Z"
-        or name == "B"
-        or name == "C"
-        or name == "S"
-        or name == "I"
-        or name == "J"
-        or name == "F"
-        or name == "D"
-        or name == "V")
+-- TODO: make a like AprilException class that we can throw each time we do an error like for example to error that an opcode isn't implemented
+local function newClassInternal(anonymous: boolean, name: string, namewithdots: string, interfaces: { string }?, fields: unknown, methods: unknown, issuper: boolean?, isinterface: boolean?)
+    assert(type(anonymous) == "boolean", "missing anonymous (arg 0)")
 
-    local cached = april.name_to_class_map[name]
+    if not anonymous then
+        assert(not april.name_to_class_map[name], "attempt to create an already-existing class")
+    end
+
+    local class = {
+        name = assert(name, "missing name (arg 1)"),
+        namewithdots = assert(namewithdots, "missing namewithdots (arg 2)"),
+        hasloaded = false,
+        isarray = false,
+        isprimitive = false,
+        issuper = not not issuper,
+        isinterface = not not isinterface,
+        interfaces = interfaces or {},
+        fields = fields or {},
+        methods = methods or {},
+        fieldcache = {},
+        methodcache = {}
+    }
+    assignClassObject(class)
+
+    if not anonymous then
+        april.name_to_class_map[name] = class
+    end
+
+    return class
+end
+function april.newClass(name: string, namewithdots: string, interfaces: { string }?, fields: unknown, methods: unknown, issuper: boolean?, isinterface: boolean?)
+    return newClassInternal(false, name, namewithdots, interfaces, fields, methods, issuper, isinterface)
+end
+function april.newClassAnonymous(name: string, namewithdots: string, interfaces: { string }?, fields: unknown, methods: unknown, issuper: boolean?, isinterface: boolean?)
+    return newClassInternal(true, name, namewithdots, interfaces, fields, methods, issuper, isinterface)
+end
+
+local primitive_name_map = {
+    Z = "boolean",
+    B = "byte",
+    C = "char",
+    S = "short",
+    I = "int",
+    J = "long",
+    F = "float",
+    D = "double",
+    V = "void"
+}
+function april.getPrimitiveClass(name): any
+    local realname = primitive_name_map[name]
+    assert(realname)
+
+    local cached = april.name_to_class_map[realname]
     if cached then
         return cached
     end
 
-    local class = {
-        name = name,
-        hasloaded = false,
-        isarray = false,
-        isprimitive = true,
-        issuper = true,
-        isinterface = false,
-        fieldcache = {},
-        methodcache = {},
-        fields = {},
-        methods = {}
-    }
-    assignClassObject(class)
-
-    april.name_to_class_map[name] = class
+    local class = april.newClass(realname, realname)
+    class.isprimitive = true
+    class.issuper = true
 
     return class
 end
@@ -778,13 +822,42 @@ function april.newObject(class, static: boolean?): any
     object.hashcode = hashcode
     hashcode_counter = hashcode
 
+    local iter = 0
     local classname = class.name
     while classname do
-        local targetclass = april.getClass(classname)
+        iter += 1
+        local targetclass
+        if iter == 1 then
+            -- NOTE: this exists to fix defineAnonymousClass native
+            targetclass = class
+        else
+            targetclass = april.getClass(classname)
+        end
 
         for k, v in targetclass.fields do
             if v.isstatic and not static then continue end
-            object[v] = april.getDefault(descriptor_parser.parseFieldDescriptor(v.type))
+            local value: JavaValue
+            local constantvalue = v.constantvalue
+            if constantvalue then
+                local t = constantvalue[1]
+                if t == "long" then
+                    value = april.newLongFromBits(constantvalue[2], constantvalue[3])
+                elseif t == "float" then
+                    value = april.newFloatFromBytes(constantvalue[2])
+                elseif t == "double" then
+                    value = april.newDoubleFromBits(constantvalue[2], constantvalue[3])
+                elseif t == "integer" then
+                    value = april.newInteger(constantvalue[2])
+                elseif t == "string" then
+                    value = april.string_intern_map[april.newStringFromLuaCharArray(constantvalue[2])]
+                else
+                    error("unhandled constant value type: " .. tostring(t))
+                end
+            else
+                value = april.getDefault(descriptor_parser.parseFieldDescriptor(v.type))
+            end
+
+            object[v] = value
         end
 
         classname = targetclass.superclass
@@ -813,6 +886,9 @@ end
 function april.registerClassMap(map)
     april.name_to_class_map = map
 end
+
+-- TODO: lookupField and lookupMethod are inconsistent in that lookupfield takes a classname whereas lookupmethod has a separate function for taking a classname
+-- this really urks me, please change
 
 function april.lookupField(classname: string, fieldname: string, fieldtype: string, usecache: boolean?)
     local class = april.getClass(classname)
@@ -866,7 +942,7 @@ function april.lookupField(classname: string, fieldname: string, fieldtype: stri
     end
 
     if field.type ~= fieldtype then
-        error(("failed to find field '%s' ('%s') on class '%s' (field existed by invalid type)"):format(fieldname, fieldtype, classname))
+        error(("failed to find field '%s' ('%s') on class '%s' (field existed of a different type: '%s')"):format(fieldname, fieldtype, classname, field.type))
     end
 
     if usecache then
@@ -878,9 +954,8 @@ function april.lookupField(classname: string, fieldname: string, fieldtype: stri
     return field, fieldclass
 end
 
-function april.lookupMethod(classname: string, methodname: string, methodtype: string, usecache: boolean?, canbeabstract: boolean?)
-    local class = april.getClass(classname)
-
+function april.lookupMethod(class, methodname: string, methodtype: string, usecache: boolean?, canbeabstract: boolean?)
+    local classname = class.name
     local combinedmethodname = methodname .. '-' .. methodtype
 
     local cached = if usecache then class.methodcache[combinedmethodname] else nil
@@ -893,6 +968,15 @@ function april.lookupMethod(classname: string, methodname: string, methodtype: s
 
     local methodclass = class
     local method = class.methods[combinedmethodname]
+
+    if not method then
+        for _, v in class.methods do
+            if v.name == methodname and v.issignaturepolymorphic then
+                method = v
+                break
+            end
+        end
+    end
 
     -- superclass lookup
     do
@@ -943,8 +1027,11 @@ function april.lookupMethod(classname: string, methodname: string, methodtype: s
 
     return method, methodclass
 end
-function april.lookupMethodSpecial(currentclassname, classname, methodname, methodtype, usecache)
-    local _, resolvedclass = april.lookupMethod(classname, methodname, methodtype, usecache)
+function april.lookupMethodByClassName(classname: string, methodname: string, methodtype: string, usecache: boolean?, canbeabstract: boolean?)
+    return april.lookupMethod(april.getClass(classname), methodname, methodtype, usecache, canbeabstract)
+end
+function april.lookupMethodSpecial(currentclassname: string, classname: string, methodname: string, methodtype: string, usecache: boolean?)
+    local _, resolvedclass = april.lookupMethodByClassName(classname, methodname, methodtype, usecache)
 
     local currentclass = april.getClass(currentclassname)
     local class = resolvedclass
@@ -1013,6 +1100,18 @@ function april.lookupMethodSpecial(currentclassname, classname, methodname, meth
     return method, methodclass
 end
 
+function april.arrayClone(array)
+    local class = array.class
+    local size = array.size
+    local cloned = april.newArray(class.valuedescriptor.raw, size)
+
+    for i = 1, size do
+        cloned.list[i] = april.clone(array.list[i])
+    end
+
+    return cloned
+end
+
 function april.getArrayClass(arraytype): (any, descriptor_parser.FieldDescriptorValueArray)
     local descriptor = descriptor_parser.parseFieldDescriptor(arraytype)
     assert(descriptor.value.tag == "Array", "getArrayClass expects an array type descriptor")
@@ -1022,29 +1121,27 @@ function april.getArrayClass(arraytype): (any, descriptor_parser.FieldDescriptor
         return class, descriptor.value
     end
 
-    class = {
-        name = arraytype,
-        hasloaded = false,
-        isarray = true,
-        isprimitive = false,
-        issuper = true,
-        isinterface = false,
-        valuedescriptor = descriptor.value.array_type,
-        superclass = "java/lang/Object",
-        interfaces = {
-            -- FIXME: put these back when they exist
-            -- "java/lang/Cloneable",
-            -- "java/io/Serializable"
-        },
-        fieldcache = {},
-        methodcache = {},
-        fields = {},
-        methods = {}
+    class = april.newClass(arraytype, arraytype, {
+        "java/lang/Cloneable",
+        "java/io/Serializable",
+    })
+    class.isarray = true
+    class.issuper = true
+    class.valuedescriptor = descriptor.value.array_type
+    class.methods["clone-()Ljava/lang/Object;"] = {
+        name = "clone",
+        type = "()Ljava/lang/Object;",
+        slot = april.nextSlot(),
+        access_flags = 0x0001,
+        isstatic = false,
+        isnative = false,
+        isabstract = false,
+        issignaturepolymorphic = false,
+        func = function(this)
+            return april.newReference(april.arrayClone(this.value))
+        end,
     }
-    assignClassObject(class)
     april.array_class_map[descriptor] = class
-    -- april.registerClass(arraytype, class)
-    april.name_to_class_map[arraytype] = class
 
     return class, descriptor.value
 end
@@ -1139,10 +1236,34 @@ function april.instanceofByClassAndTargetName(class, targetname)
     return april.instanceofByClassAndTargetClass(class, april.getClass(targetname))
 end
 
-function april.javaStringToLuaString(value)
+-- local wrapped_primitive_map = {
+--     ["java/lang/Byte"] = "byte",
+--     ["java/lang/Char"] = "char",
+--     ["java/lang/Short"] = "short",
+--     ["java/lang/Integer"] = "integer",
+--     ["java/lang/Float"] = "float",
+--     ["java/lang/Long"] = "long",
+--     ["java/lang/Double"] = "double",
+--     ["java/lang/Boolean"] = "boolean",
+-- }
+-- function april.instanceofByValueAndWrappedClass(value, class)
+--     local classname = class.name
+--     local expected_tag = wrapped_primitive_map[classname]
+--     if not classname then
+--         error("unexpected class in instanceofByValueAndWrappedClass: " .. tostring(classname))
+--     end
+
+--     return value.tag == expected_tag
+-- end
+
+function april.javaStringArray(value)
     local field = value.class.fields["value"]
     local arr = value[field].value
 
+    return arr
+end
+function april.javaStringToLuaString(value)
+    local arr = april.javaStringArray(value)
     local str = table.create(arr.size)
 
     for i = 1, arr.size do
@@ -1150,6 +1271,30 @@ function april.javaStringToLuaString(value)
     end
 
     return table.concat(str)
+end
+function april.javaStringSize(value)
+    return april.javaStringArray(value).size
+end
+
+function april.callToString(valueref)
+    local methodtype = "()Ljava/lang/String;"
+    local method = april.lookupMethodByClassName("java/lang/Object", "toString", methodtype, true)
+    local methodoverride
+    pcall(function()
+        methodoverride = april.lookupMethod(valueref.value.class, "toString", methodtype, true)
+    end)
+    if methodoverride then
+        method = methodoverride
+    end
+
+    local result = method.func(valueref)
+    april.checkException()
+
+    return result
+end
+
+function april.objectRefToLuaString(objectref)
+    return april.javaStringToLuaString(april.callToString(objectref).value)
 end
 
 april.string_intern_map = setmetatable({}, {
@@ -1164,6 +1309,46 @@ april.string_intern_map = setmetatable({}, {
         return obj
     end
 })
+
+function april.getException(): any
+    local exception = april.exception_thrown
+    if exception then
+        april.exception_thrown = nil
+        return exception
+    end
+
+    return nil
+end
+
+function april.checkException()
+    local exception = april.getException()
+    if exception then
+        local method = april.lookupMethod(exception.value.class, "toString", "()Ljava/lang/String;")
+        -- TODO: check for stack overflow?
+        local str = method.func(exception)
+        april.getClass("java/lang/Throwable").methods["printStackTrace-()V"].func(exception)
+        error("EXCEPTION THROWN! " .. april.javaStringToLuaString(str.value))
+    end
+end
+
+function april.newMethodTypeFromDescriptor(descriptor: descriptor_parser.MethodDescriptor)
+    local ptypes = april.newArray("Ljava/lang/Class;", descriptor.parameter_count)
+    for i, v in descriptor.parameter_list do
+        ptypes.list[i] = april.newReference(april.getClassFromDescriptor(v).classobject)
+    end
+    assert(descriptor.returns.tag == "Field")
+    local T = april.getClassFromDescriptor(descriptor.returns.value)
+
+    local methodtypeclass = april.getClass("java/lang/invoke/MethodType")
+    april.loadClass(methodtypeclass)
+
+    local makeimpl = methodtypeclass.methods["makeImpl-(Ljava/lang/Class;[Ljava/lang/Class;Z)Ljava/lang/invoke/MethodType;"];
+
+    local methodtyperef = makeimpl.func(april.newReference(T.classobject), april.newReference(ptypes), april.newBoolean(true))
+    april.checkException()
+
+    return methodtyperef
+end
 
 return april
 

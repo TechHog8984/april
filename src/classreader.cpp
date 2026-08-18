@@ -5,6 +5,9 @@
 #include <cmath>
 #include <format>
 #include <iostream>
+#include <vector>
+
+ConstantPatch constant_patches[CONSTANT_PATCH_MAX];
 
 std::string doubleTostring(DoubleValue& value) {
     switch (value.type) {
@@ -37,6 +40,31 @@ std::string floatTostring(FloatValue& value) {
 
 std::string utf8Tostring(Utf8& utf8) {
     return std::string(reinterpret_cast<const char*>(utf8.bytes), utf8.bytes_size);
+}
+
+std::string methodHandleReferenceKindTostring(uint8_t kind) {
+    switch (kind) {
+        case REF_getField:
+            return "REF_getField";
+        case REF_getStatic:
+            return "REF_getStatic";
+        case REF_putField:
+            return "REF_putField";
+        case REF_putStatic:
+            return "REF_putStatic";
+        case REF_invokeVirtual:
+            return "REF_invokeVirtual";
+        case REF_invokeStatic:
+            return "REF_invokeStatic";
+        case REF_invokeSpecial:
+            return "REF_invokeSpecial";
+        case REF_newInvokeSpecial:
+            return "REF_newInvokeSpecial";
+        case REF_invokeInterface:
+            return "REF_invokeInterface";
+    }
+
+    return "UNKNOWN";
 }
 
 int readAttributeList(std::istream& classfile, uint16_t& attribute_count, Attribute*& attribute_list, uint16_t constant_pool_count, Constant* constant_pool, Attribute* parent_attribute) {
@@ -923,6 +951,21 @@ int readClassFile(std::istream& classfile, Class &_class) {
         }
     }
 
+    // apply patches
+    {
+        for (size_t i = 0; i < constant_patch_count; i++) {
+            ConstantPatch& patch = constant_patches[i];
+            Constant& constant = _class.constant_pool[patch.index];
+
+            // std::cout << "PATCHING... constant #" << patch.index << ", tag: " << constant_type_names[constant.tag] << constant.Utf8.bytes << std::endl;
+
+            constant.tag = ConstantType::ConstantPatchObject;
+            constant.ConstantPatchObject.index = patch.list_index;
+
+            // TODO: type checking? i think this would actually be in the codegen...
+        }
+    }
+
     // third pass to ensure NameAndType are evaluated
     for (uint16_t i = 0; i < _class.constant_pool_count; i++) {
         Constant& constant = _class.constant_pool[i];
@@ -935,24 +978,24 @@ int readClassFile(std::istream& classfile, Class &_class) {
                 }
                 constant.MethodHandle.reference = &_class.constant_pool[constant.MethodHandle.reference_index - 1];
                 switch (constant.MethodHandle.reference_kind) {
-                    case 1:
-                    case 2:
-                    case 3:
-                    case 4:
+                    case REF_getField:
+                    case REF_getStatic:
+                    case REF_putField:
+                    case REF_putStatic:
                         if (constant.MethodHandle.reference->tag != ConstantType::Fieldref) {
                             std::cerr << "[ERROR]: expected Fieldref for constant #" << i << "'s reference tag but got " << constant_type_names.at(constant.MethodHandle.reference->tag) << std::endl;
                             return 1;
                         }
                         break;
-                    case 5:
-                    case 8:
+                    case REF_invokeVirtual:
+                    case REF_newInvokeSpecial:
                         if (constant.MethodHandle.reference->tag != ConstantType::Methodref) {
                             std::cerr << "[ERROR]: expected Methodref for constant #" << i << "'s reference tag but got " << constant_type_names.at(constant.MethodHandle.reference->tag) << std::endl;
                             return 1;
                         }
                         break;
-                    case 6:
-                    case 7:
+                    case REF_invokeStatic:
+                    case REF_invokeSpecial:
                         if (_class.major_version < 52) {
                             if (constant.MethodHandle.reference->tag != ConstantType::Methodref) {
                                 std::cerr << "[ERROR]: expected Methodref for constant #" << i << "'s reference tag but got " << constant_type_names.at(constant.MethodHandle.reference->tag) << std::endl;
@@ -965,7 +1008,7 @@ int readClassFile(std::istream& classfile, Class &_class) {
                             }
                         }
                         break;
-                    case 9:
+                    case REF_invokeInterface:
                         if (constant.MethodHandle.reference->tag != ConstantType::InterfaceMethodref) {
                             std::cerr << "[ERROR]: expected InterfaceMethodref for constant #" << i << "'s reference tag but got " << constant_type_names.at(constant.MethodHandle.reference->tag) << std::endl;
                             return 1;
@@ -977,10 +1020,10 @@ int readClassFile(std::istream& classfile, Class &_class) {
                         return 1;
                 }
                 switch (constant.MethodHandle.reference_kind) {
-                    case 5:
-                    case 6:
-                    case 7:
-                    case 9:
+                    case REF_invokeVirtual:
+                    case REF_invokeStatic:
+                    case REF_invokeSpecial:
+                    case REF_invokeInterface:
                         if (constant.MethodHandle.reference->GeneralRef.name_and_type->NameAndType.name->Utf8.atom == Atom_kClassInitialization ||
                             constant.MethodHandle.reference->GeneralRef.name_and_type->NameAndType.name->Utf8.atom == Atom_kInstanceInitialization)
                         {
@@ -989,7 +1032,7 @@ int readClassFile(std::istream& classfile, Class &_class) {
                             break;
                         }
                         break;
-                    case 8:
+                    case REF_newInvokeSpecial:
                         if (constant.MethodHandle.reference->GeneralRef.name_and_type->NameAndType.name->Utf8.atom != Atom_kInstanceInitialization) {
                             std::cerr << "[ERROR]: expected instance initialization method for constant #" << i << "'s reference method but got " << utf8Tostring(constant.MethodHandle.reference->GeneralRef.name_and_type->NameAndType.name->Utf8) << std::endl;
                             return 1;
@@ -1343,7 +1386,7 @@ int readClassFile(std::istream& classfile, Class &_class) {
                     std::cerr << "[ERROR]: constant #" << i << "'s bootstrap_method index was out of bounds" << std::endl;
                     return 1;
                 }
-                constant.InvokeDynamic.bootstrap_method = &bootstrap_methods_attribute->BootstrapMethods.bootstrap_method_list[constant.InvokeDynamic.bootstrap_method_index - 1];
+                constant.InvokeDynamic.bootstrap_method = &bootstrap_methods_attribute->BootstrapMethods.bootstrap_method_list[constant.InvokeDynamic.bootstrap_method_index];
                 break;
             default:
                 break;

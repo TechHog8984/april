@@ -22,6 +22,9 @@ end
 function natives.readFile(...)
     error("please override natives.readFile")
 end
+function natives.writeFile(...)
+    error("please override natives.writeFile")
+end
 function natives.setJavaHome(java_home)
     natives.java_home = java_home
 end
@@ -44,14 +47,7 @@ function natives.registerDefault()
         ["clone-()Ljava/lang/Object;"] = function(this)
             local class = this.value.class
             if class.isarray then
-                local size = this.value.size
-                local cloned = april.newArray(class.valuedescriptor.raw, size)
-
-                for i = 1, size do
-                    cloned.list[i] = april.clone(this.value.list[i])
-                end
-
-                return april.newReference(cloned)
+                return april.newReference(april.arrayClone(this.value))
             else
                 local cloned = april.newObject(this.value.class)
                 -- TODO: check Cloneable interface
@@ -93,6 +89,57 @@ function natives.registerDefault()
                 end
                 coroutine.resume(waiting_thread)
             end
+        end
+    })
+
+    natives.registerMethods("java/lang/Throwable", {
+        ["fillInStackTrace-(I)Ljava/lang/Throwable;"] = function(this)
+            -- NOTE: sync with getCallerClass
+            local callstack = april.callstack
+
+            local list = {}
+
+            local element_class = april.getClass("java/lang/StackTraceElement")
+            local element_constructor = element_class.methods["<init>-(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;I)V"]
+
+            local callstack_count = #callstack
+            for i = callstack_count, 1, -1 do
+                local obj = callstack[i]
+                -- if i == callstack_count then
+                --     -- TODO: check caller sensitive
+                --     -- print("skipping cuz it's the first one", obj.method.name)
+                --     continue
+                -- end
+                if obj.method.name == "invoke" then
+                    print("TODO: we found 'invoke' in the stack... check if this is the right class to ignore", obj.class.name)
+                    -- continue
+                end
+                -- print(obj.method.name)
+                -- TODO: check lambda
+
+                local elementref = april.newReference(april.newObject(element_class))
+
+                local filename = if obj.filename then april.newString(obj.filename) else april.newReference()
+                -- TODO: should it be class.namewithdots?
+                element_constructor.func(elementref, april.newString(obj.class.name), april.newString(obj.method.name), filename, april.newInteger(obj.linenumber))
+                april.checkException()
+
+                list[#list + 1] = elementref
+            end
+
+            local array = april.newArray("Ljava/lang/StackTraceElement;", #list)
+            array.list = list
+
+            this.value.stacktrace = array
+
+            return this
+        end,
+        ["getStackTraceDepth-()I"] = function(this)
+            local stacktrace = this.value.stacktrace
+            return april.newInteger(stacktrace.size)
+        end,
+        ["getStackTraceElement-(I)Ljava/lang/StackTraceElement;"] = function(this, i)
+            return this.value.stacktrace.list[i.value + 1]
         end
     })
 
@@ -181,6 +228,7 @@ function natives.registerDefault()
                 local field_name = assert(fieldclass.fields["name"], "failed to find name field")
                 local field_type = assert(fieldclass.fields["type"], "failed to find type field")
                 local field_modifiers = assert(fieldclass.fields["modifiers"], "failed to find modifiers field")
+                local field_signature = assert(fieldclass.fields["signature"], "failed to find signature field")
 
                 for _, field in class.fields do
                     if public_only.value and not field.ispublic then
@@ -193,12 +241,80 @@ function natives.registerDefault()
                     fieldobj[field_name] = april.string_intern_map[april.newString(field.name)]
                     fieldobj[field_type] = april.newReference(april.getClassFromDescriptor(descriptor_parser.parseFieldDescriptor(field.type)).classobject)
                     fieldobj[field_modifiers] = april.newInteger(field.access_flags)
+                    fieldobj[field_signature] = april.newString(field.type)
 
                     count += 1
                     list[count] = fieldobj
                 end
 
                 local array = april.newArray("Ljava/lang/reflect/Field;", count)
+                for i = 1, count do
+                    array.list[i] = april.newReference(list[i])
+                end
+
+                return april.newReference(array)
+            end
+            dict["getDeclaredMethods0-(Z)[Ljava/lang/reflect/Method;"] = function(this, public_only)
+                local class = this.value.classclass
+
+                local list = {}
+                local count = 0
+
+                local methodclass = april.getClass("java/lang/reflect/Method")
+
+                local field_clazz = assert(methodclass.fields["clazz"], "failed to find clazz field")
+                local field_slot = assert(methodclass.fields["slot"], "failed to find slot field")
+                local field_name = assert(methodclass.fields["name"], "failed to find name field")
+                local field_returnType = assert(methodclass.fields["returnType"], "failed to find returnType field")
+                local field_parameterTypes = assert(methodclass.fields["parameterTypes"], "failed to find parameterTypes field")
+                local field_exceptionTypes = assert(methodclass.fields["exceptionTypes"], "failed to find exceptionTypes field")
+                local field_modifiers = assert(methodclass.fields["modifiers"], "failed to find modifiers field")
+                local field_signature = assert(methodclass.fields["signature"], "failed to find signature field")
+
+                for _, method in class.methods do
+                    if public_only.value and not method.ispublic then
+                        continue
+                    end
+
+                    local methodobj = april.newObject(methodclass)
+                    methodobj[field_clazz] = this
+                    methodobj[field_slot] = april.newInteger(method.slot)
+                    methodobj[field_name] = april.string_intern_map[april.newString(method.name)]
+
+                    do
+                        local descriptor = descriptor_parser.parseMethodDescriptor(method.type)
+                        local returns = descriptor.returns
+                        methodobj[field_returnType] = if returns.tag == "Field" then
+                            april.newReference(april.getClassFromDescriptor(returns.value).classobject)
+                        else
+                            april.newReference(april.getPrimitiveClass("V").classobject)
+                    end
+
+                    do
+                        local parameter_type_list = {}
+                        local descriptor = descriptor_parser.parseMethodDescriptor(method.type)
+                        for i, param in descriptor.parameter_list do
+                            parameter_type_list[i] = april.getClassFromDescriptor(param).classobject
+                        end
+
+                        local parameter_type_array = april.newArray("Ljava/lang/Class;", #parameter_type_list)
+                        for i, v in parameter_type_list do
+                            parameter_type_array.list[i] = april.newReference(v)
+                        end
+
+                        methodobj[field_parameterTypes] = april.newReference(parameter_type_array)
+                    end
+                    -- FIXME: exception types
+                    methodobj[field_exceptionTypes] = april.newReference(april.newArray("Ljava/lang/Class;", 0))
+
+                    methodobj[field_modifiers] = april.newInteger(method.access_flags)
+                    methodobj[field_signature] = april.newString(method.type)
+
+                    count += 1
+                    list[count] = methodobj
+                end
+
+                local array = april.newArray("Ljava/lang/reflect/Method;", count)
                 for i = 1, count do
                     array.list[i] = april.newReference(list[i])
                 end
@@ -243,6 +359,7 @@ function natives.registerDefault()
                     end
 
                     constructorobj[field_parameterTypes] = april.newReference(parameter_type_array)
+                    -- FIXME: exception types
                     constructorobj[field_exceptionTypes] = april.newReference(april.newArray("Ljava/lang/Class;", 0))
 
                     constructorobj[field_modifiers] = april.newInteger(method.access_flags)
@@ -252,6 +369,28 @@ function natives.registerDefault()
                 end
 
                 local array = april.newArray("Ljava/lang/reflect/Constructor;", count)
+                for i = 1, count do
+                    array.list[i] = april.newReference(list[i])
+                end
+
+                return april.newReference(array)
+            end
+            dict["getDeclaredClasses0-()[Ljava/lang/Class;"] = function(this)
+                local class = this.value.classclass
+
+                local count = 0
+                local list = {}
+
+                if class.innerclasses then
+                    for _, info in class.innerclasses do
+                        if info.outerclassname == class.name then
+                            count += 1
+                            list[count] = april.getClass(info.innerclassname).classobject
+                        end
+                    end
+                end
+
+                local array = april.newArray("Ljava/lang/Class;", count)
                 for i = 1, count do
                     array.list[i] = april.newReference(list[i])
                 end
@@ -325,22 +464,40 @@ function natives.registerDefault()
             dict["arraycopy-(Ljava/lang/Object;ILjava/lang/Object;II)V"] = function(src, srcpos, dest, destpos, length)
                 -- TODO: exceptions
 
-                for i = 1, length.value do
-                    dest.value.list[destpos.value + i] = april.clone(src.value.list[srcpos.value + i])
+                -- for i = 1, length.value do
+                --     dest.value.list[destpos.value + i] = april.clone(src.value.list[srcpos.value + i])
+                -- end
+
+                -- TODO: this is chatgpt... please read it and understand what it's doing
+                local s = srcpos.value
+                local d = destpos.value
+                local n = length.value
+
+                if src == dest and d > s then
+                    for i = n, 1, -1 do
+                        dest.value.list[d + i] = april.clone(src.value.list[s + i])
+                    end
+                else
+                    for i = 1, n do
+                        dest.value.list[d + i] = april.clone(src.value.list[s + i])
+                    end
                 end
             end
             dict["initProperties-(Ljava/util/Properties;)Ljava/util/Properties;"] = function(properties)
                 local class = properties.value.class
 
-                local putmethod = april.lookupMethod(class.name, "put", "(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;")
+                local putmethod = april.lookupMethod(class, "put", "(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;")
 
                 local function putProp(key: string, value: string)
                     putmethod.func(properties, april.newString(key), april.newString(value))
+                    april.checkException()
                 end
 
                 local MAJOR_VERSION = 1
                 local MINOR_VERSION = 8
-                local RELEASE = "1.8.0_452"
+                -- TODO: call `java -version` command
+                -- local RELEASE = "1.8.0_452"
+                local RELEASE = "1.8.0_502"
                 local SUPPORTED_VERSION = 52
                 local SUPPORTED_MINOR_VERSION = 0
 
@@ -483,7 +640,15 @@ function natives.registerDefault()
                 -- return april.newString("hey bro");
                 return name
             end
+            -- TODO: actually make sure it's from this loader
             dict["findLoadedClass0-(Ljava/lang/String;)Ljava/lang/Class;"] = function(_, name)
+                local newname = april.javaStringToLuaString(name.value):gsub("%.", "/")
+
+                local class = april.findClass(newname)
+                return april.newReference(if class then class.classobject else nil)
+            end
+            -- TODO: actually make sure it's from the bootstrap loader
+            dict["findBootstrapClass-(Ljava/lang/String;)Ljava/lang/Class;"] = function(_, name)
                 local newname = april.javaStringToLuaString(name.value):gsub("%.", "/")
 
                 local class = april.findClass(newname)
@@ -547,10 +712,11 @@ function natives.registerDefault()
                 -- print("STARTING A THREAD", debug.traceback())
                 threadinfo[this.value].alive = true
 
-                local run = april.lookupMethod(this.value.class.name, "run", "()V")
+                local run = april.lookupMethod(this.value.class, "run", "()V")
 
                 coroutine.wrap(function()
                     run.func(this)
+                    april.checkException()
                 end)()
                 -- error"aight just spawned it"
             end
@@ -584,7 +750,7 @@ function natives.registerDefault()
             mainthread[mainthread.class.fields.group] = april.newReference(mainthreadgroup)
             mainthread[mainthread.class.fields.priority] = april.newInteger(1)
 
-            april.hooks_newObject[#april.hooks_newObject] = function(object)
+            april.hooks_newObject[#april.hooks_newObject + 1] = function(object)
                 if not april.instanceofByClassAndTargetName(object.class, "java/lang/Thread") then
                     return
                 end
@@ -604,6 +770,7 @@ function natives.registerDefault()
                     april.newReference(april.newArray("Ljava/security/ProtectionDomain;", 0)),
                     april.newBoolean(true)
                 )
+                april.checkException()
             end
         end
     })
@@ -611,6 +778,9 @@ function natives.registerDefault()
         ["registerNatives-()V"] = function()
             local dict = natives.class_to_dict_map["sun/misc/Unsafe"]
 
+            dict["shouldBeInitialized-(Ljava/lang/Class;)Z"] = function(_, classobject)
+                return april.newBoolean(not classobject.value.classclass.hasloaded)
+            end
             dict["ensureClassInitialized-(Ljava/lang/Class;)V"] = function(_, classobject)
                 april.loadClass(classobject.value.classclass)
             end
@@ -815,6 +985,52 @@ function natives.registerDefault()
                 assert(value.tag == "integer")
 
                 return value
+            end
+            dict["getByteVolatile-(Ljava/lang/Object;J)B"] = function(_, o, offset)
+                assert(not o.value.class.isarray)
+                local target_field
+                for k in o.value do
+                    if type(k) ~= "table" then
+                        continue
+                    end
+
+                    if k.slot == offset.value then
+                        target_field = k
+                        break
+                    end
+                end
+                assert(target_field)
+
+                -- TODO: make this atomic?
+
+                local value = o.value[target_field]
+                local valueint = april.intValue(value)
+                assert(valueint)
+
+                return april.newByte(valueint)
+            end
+            dict["getCharVolatile-(Ljava/lang/Object;J)C"] = function(_, o, offset)
+                assert(not o.value.class.isarray)
+                local target_field
+                for k in o.value do
+                    if type(k) ~= "table" then
+                        continue
+                    end
+
+                    if k.slot == offset.value then
+                        target_field = k
+                        break
+                    end
+                end
+                assert(target_field)
+
+                -- TODO: make this atomic?
+
+                local value = o.value[target_field]
+                local valueint = april.intValue(value)
+                assert(valueint)
+
+                return april.newChar(valueint)
             end
             dict["getLongVolatile-(Ljava/lang/Object;J)J"] = function(_, o, offset)
                 assert(not o.value.class.isarray)
@@ -1051,6 +1267,75 @@ function natives.registerDefault()
                 -- TODO: actually get _SC_PAGESIZE or wtv windows/mac does for it
                 return april.newInteger(4096)
             end
+
+            local anonymous_class_counter = 0
+            dict["defineAnonymousClass-(Ljava/lang/Class;[B[Ljava/lang/Object;)Ljava/lang/Class;"] = function(_, host, data, patches)
+                -- TODO: use host (for like classloader and stuff)
+
+                local classname = "_aprilgenerated" .. anonymous_class_counter
+                local fileprefix = "_aprilgenerated/" .. classname
+                local classfilepath = fileprefix .. ".class"
+                local luaufilepath = fileprefix .. ".luau"
+
+                -- local datalen = data.value.size
+                -- local datalist = table.create(datalen)
+                -- for i, v in data.value.list do
+                --     datalist[i] = april.wrapUnsigned(v.value, 8)
+                -- end
+
+                -- local datastr = string.pack(("B"):rep(datalen), table.unpack(datalist))
+                -- natives.writeFile(classfilepath, datastr)
+
+                local datalen = data.value.size
+                local databuf = buffer.create(datalen)
+                for i, v in data.value.list do
+                    buffer.writeu8(databuf, i - 1, v.value)
+                end
+
+                natives.writeFile(classfilepath, buffer.tostring(databuf))
+
+                anonymous_class_counter += 1
+
+                local argv = { classfilepath, "--output=" .. luaufilepath }
+                local argc = #argv
+
+                local has_patch = false
+                for i,v in patches.value.list do
+                    if v.tag ~= "reference" then
+                        error("TODO: non reference type for constant pool patch")
+                    end
+
+                    if not v.value then
+                        continue
+                    end
+
+                    has_patch = true
+
+                    local list = april.constant_patch_objects
+                    local index = #list + 1
+                    list[index] = v
+
+                    argc += 1
+                    -- TODO: WHY DO WE SUB 2 NOT 1...
+                    argv[argc] = "--constant-patch=" .. (i - 2) .. ',' .. index
+                    -- print(argv[argc])
+                end
+
+                local result = natives.runProcess("../build/april", argv)
+                if not result.ok then
+                    error("failed to run april: " .. result.stderr .. '\n' .. result.stdout)
+                end
+
+                local class = april.getClass(classname)
+
+                april.loadClass(class)
+
+                if has_patch and class.name ~= "java/lang/invoke/LambdaForm$MH" then
+                    error("TODO: test patches with more cases")
+                end
+
+                return april.newReference(class.classobject)
+            end
         end
     })
 
@@ -1065,7 +1350,7 @@ function natives.registerDefault()
 
     local byte_newline = string.byte('\n')
     local stdout_buffer = table.create(256)
-    local function writeStdoutBytes(data, start, count)
+    local function writeStdoutBytes(data, start, count, iserr)
         if count < 1 then return end
 
         local index = 0
@@ -1085,6 +1370,9 @@ function natives.registerDefault()
             return
         end
 
+        if iserr then
+            table.insert(stdout_buffer, 1, "[stderr] ")
+        end
         print(table.concat(stdout_buffer))
         table.clear(stdout_buffer)
 
@@ -1121,8 +1409,10 @@ function natives.registerDefault()
             local attach = file_descriptor_class.methods["attach-(Ljava/io/Closeable;)V"]
 
             init.func(fdobjref, april.newInteger(fd))
+            april.checkException()
             this.value[file_input_stream_class.fields.fd] = fdobjref
             attach.func(fdobjref, this)
+            april.checkException()
         end,
         ["close0-()V"] = function(this)
             local file_input_stream_class = april.getClass("java/io/FileInputStream")
@@ -1232,12 +1522,19 @@ function natives.registerDefault()
             local fd_out = filedescriptor_class.staticinstance[filedescriptor_class.fields["out"]].value
 
             if fd == fd_out then
-                if not b.value.list then error"larp" end
                 writeStdoutBytes(b.value.list, off.value, len.value)
 
                 return
             end
 
+            local fd_err = filedescriptor_class.staticinstance[filedescriptor_class.fields["err"]].value
+            if fd == fd_err then
+                writeStdoutBytes(b.value.list, off.value, len.value, true)
+
+                return
+            end
+
+            print(fd[filedescriptor_class.fields.fd].value)
             error"unhandled file descriptor"
         end
     })
@@ -1250,6 +1547,7 @@ function natives.registerDefault()
     natives.registerMethods("sun/reflect/Reflection", {
         ["getCallerClass-()Ljava/lang/Class;"] = function()
             -- TODO: ignore java.lang.reflect.Method.invoke frames
+            -- NOTE: sync with fillInStackTrace
             local callstack = april.callstack
 
             local callstack_count = #callstack
@@ -1261,7 +1559,7 @@ function natives.registerDefault()
                     continue
                 end
                 if obj.method.name == "invoke" then
-                    -- print("TODO: check if this is the right class", obj.class.name)
+                    print("TODO: check if this is the right class", obj.class.name)
                     continue
                 end
                 -- print(obj.method.name)
@@ -1283,23 +1581,38 @@ function natives.registerDefault()
         ["doPrivileged-(Ljava/security/PrivilegedExceptionAction;)Ljava/lang/Object;"] = function(action)
             -- TODO: actually escalate privileges or whatever
 
-            local method = april.lookupMethod(action.value.class.name, "run", "()Ljava/lang/Object;")
+            local method = april.lookupMethod(action.value.class, "run", "()Ljava/lang/Object;")
             assert(not method.isabstract)
-            return method.func(action)
+            local result = method.func(action)
+            april.checkException()
+            return result
         end,
         ["doPrivileged-(Ljava/security/PrivilegedAction;)Ljava/lang/Object;"] = function(action)
             -- TODO: actually escalate privileges or whatever
 
-            local method = april.lookupMethod(action.value.class.name, "run", "()Ljava/lang/Object;")
+            local method = april.lookupMethod(action.value.class, "run", "()Ljava/lang/Object;")
             assert(not method.isabstract)
-            return method.func(action)
+            local result = method.func(action)
+            april.checkException()
+            return result
         end,
         ["doPrivileged-(Ljava/security/PrivilegedAction;Ljava/security/AccessControlContext;)Ljava/lang/Object;"] = function(action, context)
             -- TODO: actually escalate privileges or whatever
 
-            local method = april.lookupMethod(action.value.class.name, "run", "()Ljava/lang/Object;")
+            local method = april.lookupMethod(action.value.class, "run", "()Ljava/lang/Object;")
             assert(not method.isabstract)
-            return method.func(action)
+            local result = method.func(action)
+            april.checkException()
+            return result
+        end,
+        ["doPrivileged-(Ljava/security/PrivilegedExceptionAction;Ljava/security/AccessControlContext;)Ljava/lang/Object;"] = function(action, context)
+            -- TODO: actually escalate privileges or whatever
+
+            local method = april.lookupMethod(action.value.class, "run", "()Ljava/lang/Object;")
+            assert(not method.isabstract)
+            local result = method.func(action)
+            april.checkException()
+            return result
         end,
         ["getStackAccessControlContext-()Ljava/security/AccessControlContext;"] = function()
             return april.newReference(stack_access_control_context)
@@ -1337,6 +1650,7 @@ function natives.registerDefault()
             else
                 target_method.func(objectref)
             end
+            april.checkException()
 
             return objectref
         end
@@ -1378,6 +1692,403 @@ function natives.registerDefault()
         ["getSystemTimeZoneID-(Ljava/lang/String;)Ljava/lang/String;"] = function(javahome)
             -- TODO: get user actual timezone
             return april.newString("EST");
+        end
+    })
+
+    natives.registerMethods("java/lang/invoke/MethodHandleNatives", {
+        ["registerNatives-()V"] = function()
+            local dict = natives.class_to_dict_map["java/lang/invoke/MethodHandleNatives"]
+
+            dict["getConstant-(I)I"] = function(which)
+                local whichv = which.value
+                -- if whichv == 0 then
+                --     return april.newInteger()
+                -- elseif whichv == 1 then
+
+                -- end
+
+                -- GC_COUNT_GWT
+                if whichv == 4 then
+                    return april.newInteger(0)
+                end
+
+                print(whichv)
+                error("invalid which")
+            end
+
+            local MN_IS_METHOD      = 0x00010000
+            local MN_IS_CONSTRUCTOR = 0x00020000
+            local MN_IS_FIELD       = 0x00040000
+            local MN_IS_TYPE        = 0x00080000
+            local MN_CALLER_SENSITIVE     = 0x00100000
+            local MN_REFERENCE_KIND_SHIFT = 24
+
+            local REF_getField          = 1
+            local REF_getStatic         = 2
+            local REF_putField          = 3
+            local REF_putStatic         = 4
+            local REF_invokeVirtual     = 5
+            local REF_invokeStatic      = 6
+            local REF_invokeSpecial     = 7
+            local REF_newInvokeSpecial  = 8
+            local REF_invokeInterface   = 9
+
+            local MN_SEARCH_SUPERCLASSES = 0x00100000
+            local MN_SEARCH_INTERFACES   = 0x00200000
+
+            local constant_list = {
+                { GC_COUNT_GWT = 4 },
+                { GC_LAMBDA_SUPPORT = 5 },
+
+                { MN_IS_METHOD           = MN_IS_METHOD },
+                { MN_IS_CONSTRUCTOR      = MN_IS_CONSTRUCTOR },
+                { MN_IS_FIELD            = MN_IS_FIELD },
+                { MN_IS_TYPE             = MN_IS_TYPE },
+                { MN_CALLER_SENSITIVE    = MN_CALLER_SENSITIVE },
+                { MN_REFERENCE_KIND_SHIFT = MN_REFERENCE_KIND_SHIFT },
+                { MN_REFERENCE_KIND_MASK = bit32.rshift(0x0F000000, MN_REFERENCE_KIND_SHIFT) },
+                { MN_SEARCH_SUPERCLASSES = MN_SEARCH_SUPERCLASSES },
+                { MN_SEARCH_INTERFACES   = MN_SEARCH_INTERFACES },
+
+                { CONSTANT_Utf8                = 1  },
+                { CONSTANT_Integer             = 3  },
+                { CONSTANT_Float               = 4  },
+                { CONSTANT_Long                = 5  },
+                { CONSTANT_Double              = 6  },
+                { CONSTANT_Class               = 7  },
+                { CONSTANT_String              = 8  },
+                { CONSTANT_Fieldref            = 9  },
+                { CONSTANT_Methodref           = 10 },
+                { CONSTANT_InterfaceMethodref  = 11 },
+                { CONSTANT_NameAndType         = 12 },
+                { CONSTANT_MethodHandle        = 15 },
+                { CONSTANT_MethodType          = 16 },
+                { CONSTANT_InvokeDynamic       = 18 },
+                { CONSTANT_LIMIT               = 19 },
+
+                { ACC_PUBLIC                 = 0x0001 },
+                { ACC_PRIVATE                = 0x0002 },
+                { ACC_PROTECTED              = 0x0004 },
+                { ACC_STATIC                 = 0x0008 },
+                { ACC_FINAL                  = 0x0010 },
+                { ACC_SYNCHRONIZED           = 0x0020 },
+                { ACC_VOLATILE               = 0x0040 },
+                { ACC_TRANSIENT              = 0x0080 },
+                { ACC_NATIVE                 = 0x0100 },
+                { ACC_INTERFACE              = 0x0200 },
+                { ACC_ABSTRACT               = 0x0400 },
+                { ACC_STRICT                 = 0x0800 },
+                { ACC_SYNTHETIC              = 0x1000 },
+                { ACC_ANNOTATION             = 0x2000 },
+                { ACC_ENUM                   = 0x4000 },
+                -- aliases:
+                { ACC_SUPER                  = 0x0020 }, -- SYNCHRONIZED
+                { ACC_BRIDGE                 = 0x0040 }, -- VOLATILE
+                { ACC_VARARGS                = 0x0080 }, -- TRANSIENT
+
+                { REF_NONE                    = 0                    },
+                { REF_getField                = REF_getField         },
+                { REF_getStatic               = REF_getStatic        },
+                { REF_putField                = REF_putField         },
+                { REF_putStatic               = REF_putStatic        },
+                { REF_invokeVirtual           = REF_invokeVirtual    },
+                { REF_invokeStatic            = REF_invokeStatic     },
+                { REF_invokeSpecial           = REF_invokeSpecial    },
+                { REF_newInvokeSpecial        = REF_newInvokeSpecial },
+                { REF_invokeInterface         = REF_invokeInterface  },
+                { REF_LIMIT                   =  10                  },
+
+                { T_BOOLEAN  =  4 },
+                { T_CHAR     =  5 },
+                { T_FLOAT    =  6 },
+                { T_DOUBLE   =  7 },
+                { T_BYTE     =  8 },
+                { T_SHORT    =  9 },
+                { T_INT      = 10 },
+                { T_LONG     = 11 },
+                { T_OBJECT   = 12 },
+                -- { T_ARRAY    = 13 },
+                { T_VOID     = 14 },
+                -- { T_ADDRESS  = 15 },
+                { T_ILLEGAL  = 99 },
+            }
+            local constant_count = #constant_list
+            local field_count
+            dict["getNamedCon-(I[Ljava/lang/Object;)I"] = function(which, name)
+                if not field_count then
+                    field_count = 0
+                    for _ in april.getClass("java/lang/invoke/MethodHandleNatives$Constants").fields do
+                        field_count += 1
+                    end
+                    assert(field_count == constant_count, "field count does not match constantcount (" .. tostring(field_count) .. ", " .. tostring(constant_count) .. ')')
+                end
+                local whichv = which.value + 1
+                if whichv > field_count then
+                    return april.newInteger(0)
+                end
+
+                local constant = assert(constant_list[whichv], "failed " .. whichv)
+
+                local key, value = next(constant)
+                name.value.list[1] = april.newString(key)
+                return april.newInteger(value)
+            end
+
+            -- TODO: i am lazily pasting these here, but they should be in a shared place in the project that might already exist idk im tired
+            local JVM_ACC_PUBLIC        = 0x0001  -- visible to everyone
+            local JVM_ACC_PRIVATE       = 0x0002  -- visible only to the defining class
+            local JVM_ACC_PROTECTED     = 0x0004  -- visible to subclasses
+            local JVM_ACC_STATIC        = 0x0008  -- instance variable is static
+            local JVM_ACC_FINAL         = 0x0010  -- no further subclassing, overriding
+            local JVM_ACC_SYNCHRONIZED  = 0x0020  -- wrap method call in monitor lock
+            local JVM_ACC_SUPER         = 0x0020  -- funky handling of invokespecial
+            local JVM_ACC_VOLATILE      = 0x0040  -- can not cache in registers
+            local JVM_ACC_BRIDGE        = 0x0040  -- bridge method generated by compiler
+            local JVM_ACC_TRANSIENT     = 0x0080  -- not persistent
+            local JVM_ACC_VARARGS       = 0x0080  -- method declared with variable number of args
+            local JVM_ACC_NATIVE        = 0x0100  -- implemented in C
+            local JVM_ACC_INTERFACE     = 0x0200  -- class is an interface
+            local JVM_ACC_ABSTRACT      = 0x0400  -- no definition provided
+            local JVM_ACC_STRICT        = 0x0800  -- strict floating point
+            local JVM_ACC_SYNTHETIC     = 0x1000  -- compiler-generated class, method or field
+            local JVM_ACC_ANNOTATION    = 0x2000  -- annotation type
+            local JVM_ACC_ENUM          = 0x4000  -- field is declared as element of enum
+
+            local JVM_RECOGNIZED_METHOD_MODIFIERS = bit32.bor(
+                JVM_ACC_PUBLIC,
+                JVM_ACC_PRIVATE,
+                JVM_ACC_PROTECTED,
+                JVM_ACC_STATIC,
+                JVM_ACC_FINAL,
+                JVM_ACC_SYNCHRONIZED,
+                JVM_ACC_BRIDGE,
+                JVM_ACC_VARARGS,
+                JVM_ACC_NATIVE,
+                JVM_ACC_ABSTRACT,
+                JVM_ACC_STRICT,
+                JVM_ACC_SYNTHETIC)
+
+            dict["init-(Ljava/lang/invoke/MemberName;Ljava/lang/Object;)V"] = function(self, ref)
+                local membernameclass = april.getClass("java/lang/invoke/MemberName")
+                -- local clazz_value = self.value[membernameclass.fields.clazz].value
+                local clazz_field = membernameclass.fields.clazz
+                local flagsfield = membernameclass.fields.flags
+
+                -- local clazz = clazz_value.classclass
+
+                local methodclass = april.getClass("java/lang/reflect/Method")
+
+                local reference_kind = 0
+
+                local refvalue = ref.value
+
+                if refvalue.class == methodclass then
+                    local field_clazz = assert(methodclass.fields["clazz"], "failed to find clazz field")
+                    local field_slot = assert(methodclass.fields["slot"], "failed to find slot field")
+                    local methodref = refvalue
+
+                    local classobject = methodref[field_clazz].value
+                    local class = classobject.classclass
+                    local slot = methodref[field_slot].value
+
+                    local method
+                    for _, v in class.methods do
+                        if v.slot == slot then
+                            method = v
+                            break
+                        end
+                    end
+
+                    -- TODO: make this an exception
+                    assert(method, "failed to resolve method")
+
+                    if method.isstatic then
+                        reference_kind = REF_invokeStatic
+                    elseif class.isinterface then
+                        -- TODO: test invokeInterface reference kind
+                        -- reference_kind = REF_invokeInterface
+                    else
+                        reference_kind = REF_invokeVirtual
+                    end
+
+                    self.value[clazz_field] = april.newReference(classobject)
+
+                    -- TODO: wrap short?
+                    local mods = bit32.band(method.access_flags, JVM_RECOGNIZED_METHOD_MODIFIERS)
+                    -- TODO: if caller sensitive, mods |= CALLER_SENSITIVE
+                    mods = bit32.bor(mods, MN_IS_METHOD, bit32.lshift(reference_kind, MN_REFERENCE_KIND_SHIFT))
+                    self.value[flagsfield] = april.newInteger(mods)
+
+                    return
+                end
+
+                error("failed to determine reference kind in resolve")
+            end
+            dict["resolve-(Ljava/lang/invoke/MemberName;Ljava/lang/Class;)Ljava/lang/invoke/MemberName;"] = function(self, caller)
+                -- TODO: resolve and throw exceptions on failure (i'm pretty sure the entire point of this method is to throw if the MemberName can't be resolved)
+
+                local membernameclass = april.getClass("java/lang/invoke/MemberName")
+                local clazzfield = membernameclass.fields.clazz
+                local clazz_value = self.value[clazzfield].value
+                local name_value = self.value[membernameclass.fields.name].value
+                local type_ref = self.value[membernameclass.fields.type]
+                local type_value = type_ref.value
+                local flagsfield = membernameclass.fields.flags
+
+                local clazz = clazz_value.classclass
+                local name = april.javaStringToLuaString(name_value)
+
+                local methodtypeclass = april.getClass("java/lang/invoke/MethodType")
+                local methodtype_toMethodDescriptorString = methodtypeclass.methods["toMethodDescriptorString-()Ljava/lang/String;"]
+
+                local classclass = april.getClass("java/lang/Class")
+
+                local getReferenceKind = membernameclass.methods["getReferenceKind-()B"]
+                local reference_kind_ref = getReferenceKind.func(self)
+                april.checkException()
+                local reference_kind = reference_kind_ref.value
+
+                local longclass = april.getClass("java/lang/Long")
+                april.loadClass(longclass)
+                local longValueOf = longclass.methods["valueOf-(J)Ljava/lang/Long;"]
+
+                if reference_kind == REF_invokeStatic or reference_kind == REF_invokeVirtual then
+                    assert(type_value.class == methodtypeclass)
+
+                    local descriptorref = methodtype_toMethodDescriptorString.func(type_ref)
+                    april.checkException()
+
+                    local descriptor = april.javaStringToLuaString(descriptorref.value)
+                    local method, methodclass = april.lookupMethod(clazz, name, descriptor, false)
+                    -- FIXME: i think we set clazz to the methodclass?
+                    assert(methodclass == clazz, "idk if im supposed to set this or not :P")
+                    local mods = bit32.band(method.access_flags, JVM_RECOGNIZED_METHOD_MODIFIERS)
+                    self.value[flagsfield] = april.newInteger(bit32.bor(mods, MN_IS_METHOD, bit32.lshift(reference_kind, MN_REFERENCE_KIND_SHIFT)))
+                elseif reference_kind == REF_getField then
+                    -- TODO: this code should apply to putField and the two static counterparts as well
+
+                    assert(type_value.class == classclass)
+                    local fieldtypeclass = type_value.classclass
+
+                    local field, fieldclass = april.lookupField(clazz.name, name, april.getDescriptorFromClass(fieldtypeclass).raw, false)
+                    if fieldclass ~= clazz then
+                        self.value[clazzfield] = april.newReference(fieldclass.classobject)
+                    end
+                    local mods = bit32.band(field.access_flags, 0x50DF)
+                    self.value[flagsfield] = april.newInteger(bit32.bor(mods, MN_IS_FIELD, bit32.lshift(reference_kind, MN_REFERENCE_KIND_SHIFT)))
+
+                    self.value.vmindex = longValueOf.func(april.newLong(field.slot))
+                    self.value.vmindex_primitive = field.slot
+                    april.checkException()
+                    self.value.vmtarget = april.newReference(fieldclass.classobject)
+                else
+                    print(reference_kind)
+                    error("unhandled reference kind in resolve")
+                end
+
+                return self
+            end
+
+            dict["getMemberVMInfo-(Ljava/lang/invoke/MemberName;)Ljava/lang/Object;"] = function(self)
+                local membernameclass = april.getClass("java/lang/invoke/MemberName")
+
+                local getReferenceKind = membernameclass.methods["getReferenceKind-()B"]
+                local reference_kind_ref = getReferenceKind.func(self)
+                april.checkException()
+                local reference_kind = reference_kind_ref.value
+
+                local longclass = april.getClass("java/lang/Long")
+                april.loadClass(longclass)
+                local longValueOf = longclass.methods["valueOf-(J)Ljava/lang/Long;"]
+
+                if reference_kind == REF_invokeVirtual then
+                    local array = april.newArray("Ljava/lang/Object;", 2)
+
+                    array.list[1] = longValueOf.func(april.newLong(0))
+                    april.checkException()
+                    -- TODO: this is probably not a good value for list[2]
+                    array.list[2] = self
+
+                    return april.newReference(array)
+                elseif reference_kind == REF_invokeStatic then
+                    local array = april.newArray("Ljava/lang/Object;", 2)
+
+                    array.list[1] = longValueOf.func(april.newLong(-2))
+                    april.checkException()
+                    -- TODO: this is probably not a good value for list[2]
+                    array.list[2] = self
+
+                    return april.newReference(array)
+                elseif reference_kind == REF_getField then
+                    local array = april.newArray("Ljava/lang/Object;", 2)
+
+                    array.list[1] = assert(self.value.vmindex)
+                    array.list[2] = assert(self.value.vmtarget)
+
+                    return april.newReference(array)
+                end
+
+                print(reference_kind)
+                error("unhandled reference kind in getMemberVMInfo")
+            end
+
+            dict["objectFieldOffset-(Ljava/lang/invoke/MemberName;)J"] = function(membername)
+                local vmindex = membername.value.vmindex_primitive
+                if not vmindex then
+                    error("this MemberName had no vmindex!")
+                end
+
+                return april.newLong(vmindex)
+            end
+
+            dict["getMembers-(Ljava/lang/Class;Ljava/lang/String;Ljava/lang/String;ILjava/lang/Class;I[Ljava/lang/invoke/MemberName;)I"] = function(
+                classobj, name, sig, mflags, callerobj, skip, results
+            )
+                -- MHN_getMembers
+
+                if not classobj.value or not results.value then
+                    return april.newInteger(-1)
+                end
+
+                local results = results.value
+
+                -- MethodHandles::find_MemberNames
+
+                local rfill = 0
+                local rlimit = results.size
+                local rskip = skip.value
+
+                local overflow = 0
+                local overflow_limit = math.max(1000, rlimit)
+
+                local match_flags = mflags.value
+                local search_superc = bit32.band(match_flags, MN_SEARCH_SUPERCLASSES) ~= 0
+                local search_intfc  = bit32.band(match_flags, MN_SEARCH_INTERFACES)   ~= 0
+                local local_only = not (search_superc or search_intfc)
+                local classes_only = false
+
+                if name.value and april.javaStringSize(name.value) == 0 then
+                    return april.newInteger(0)
+                end
+                if sig.value then
+                    local arr = april.javaStringArray(sig.value)
+                    if arr.size == 0 then
+                        return april.newInteger(0)
+                    end
+
+                    if arr.list[1].value == string.byte('(') then
+                        print("OK IT STARTS WITH A '('")
+                        match_flags = bit32.band(match_flags, bit32.bnot(bit32.bor(MN_IS_FIELD, MN_IS_TYPE)))
+                    else
+                        print("IT DOES NOT START WITH A '('")
+                        match_flags = bit32.band(match_flags, bit32.bnot(bit32.bor(MN_IS_CONSTRUCTOR, MN_IS_METHOD)))
+                    end
+                end
+
+                if bit32.band(match_flags, MN_IS_FIELD) ~= 0 then
+                    
+                end
+            end
         end
     })
 

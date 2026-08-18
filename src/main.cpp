@@ -10,6 +10,7 @@
 #include <iostream>
 #include <format>
 #include <sstream>
+#include <string>
 
 [[noreturn]] void printUsage(int argc, char** argv) {
     std::cout << std::format("april by techhog\n"
@@ -21,6 +22,7 @@
         "  --jar=jarfile              -  path to the jar\n"
         "  --output-folder=folder     -  path to the output folder for jar\n"
         "  --disable-codegen-asserts  -  disable codegen asserts. run twice to disable even more\n"
+        "  --constant-patch=patch     -  patch a constant pool entry. this is used internally; don't touch if you don't know what you are doing\n"
         ,argc ? argv[0] : "april") << std::endl;
     exit(1);
 }
@@ -45,6 +47,8 @@ int handleRecordOption(const char* option, const char*& arg, bool can_be_empty =
 
 bool april_logging_enabled = false;
 int disable_codegen_asserts = 0;
+
+size_t constant_patch_count = 0;
 
 int main(int argc, char** argv) {
     if (argc < 2)
@@ -76,6 +80,32 @@ int main(int argc, char** argv) {
             } else if (!handleRecordOption("--jar", arg)) {
                 input_jar_path = arg;
                 continue;
+            } else if (!handleRecordOption("--constant-patch", arg)) {
+                ConstantPatch patch;
+
+                std::string argstr = arg;
+                size_t commapos = argstr.find(',', 0);
+                if (commapos == std::string::npos) {
+                    std::cerr << "[ERROR]: constant-patch data did not contain a comma" << std::endl;
+                    exit(1);
+                }
+
+                std::string indexstr(argstr.begin(), argstr.begin() + commapos);
+                uint16_t index = std::stoi(indexstr);
+                // TODO: verify within uint16_t bounds
+                patch.index = index;
+
+                std::string listindexstr(argstr.begin() + commapos + 1, argstr.end());
+                int listindex = std::stoi(listindexstr);
+                patch.list_index = listindex;
+
+                size_t patch_index = constant_patch_count++;
+                if (patch_index >= CONSTANT_PATCH_MAX) {
+                    std::cerr << "[ERROR]: you are adding too many patches! the current limit is " << CONSTANT_PATCH_MAX << std::endl;
+                    exit(1);
+                }
+                constant_patches[patch_index] = std::move(patch);
+                continue;
             }
             goto INVALID_ARG;
         } else if (inputfile_argc)
@@ -100,6 +130,11 @@ int main(int argc, char** argv) {
     if (input_jar_path) {
         if (output_folder_path == nullptr) {
             std::cerr << "[ERROR]: you must pass an output folder if you're using --jar (run with no arguments for help)" << std::endl;
+            exit(1);
+        }
+
+        if (constant_patch_count) {
+            std::cerr << "[ERROR]: you cannot provide constant patches if using a jar input (not a functional limitation I just am explicitly disallowing it until i find a use case)" << std::endl;
             exit(1);
         }
 

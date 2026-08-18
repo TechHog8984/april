@@ -193,11 +193,19 @@ int generateLuau(Class& _class, std::string& output, std::optional<std::string_v
 
         std::string field_name(field.name->Utf8.bytes, field.name->Utf8.bytes + field.name->Utf8.bytes_size);
 
+        Attribute* constantvalue_attribute = nullptr;
+        for (uint16_t j = 0; j < field.attribute_count; j++) {
+            Attribute* attribute = &field.attribute_list[j];
+            if (attribute->name->Utf8.atom == Atom_ConstantValue) {
+                constantvalue_attribute = attribute;
+                break;
+            }
+        }
+
         indent(output);
         output.append("[\"")
-            .append(field_name);
-
-        output.append("\"] = { name = \"")
+            .append(field_name)
+            .append("\"] = { name = \"")
             .append(field_name)
             .append("\", type = \"");
         output.insert(output.end(), field.descriptor->Utf8.bytes, field.descriptor->Utf8.bytes + field.descriptor->Utf8.bytes_size);
@@ -208,14 +216,65 @@ int generateLuau(Class& _class, std::string& output, std::optional<std::string_v
         output.append(", ispublic = ")
             .append(field.access_flags & FIELD_ACC_PUBLIC ? "true" : "false");
 
+        if (constantvalue_attribute) {
+            output.append(", constantvalue = ");
+            Constant* constant = constantvalue_attribute->ConstantValue.value;
+            switch (constant->tag) {
+                case ConstantType::Long:
+                    indent(output);
+                    output.append("{ \"long\", ")
+                        .append(std::to_string(constant->Long.high))
+                        .append(", ")
+                        .append(std::to_string(constant->Long.low))
+                        .append(" }");
+                    break;
+                case ConstantType::Float:
+                    indent(output);
+                    output.append("{ \"float\", ")
+                        .append(std::to_string(constant->Float.bytes))
+                        .append(" }");
+                    break;
+                case ConstantType::Double:
+                    indent(output);
+                    output.append("{ \"double\", ")
+                        .append(std::to_string(constant->Double.high))
+                        .append(", ")
+                        .append(std::to_string(constant->Double.low))
+                        .append(" }");
+                    break;
+                case ConstantType::Integer:
+                    indent(output);
+                    output.append("{ \"integer\", ")
+                        .append(std::to_string(constant->Integer.bytes))
+                        .append(" }");
+                    break;
+                case ConstantType::String:
+                    indent(output);
+                    output.append("{ \"string\", { ");
+
+                    for (uint16_t j = 0; j < constant->String.string->Utf8.bytes_size; j++) {
+                        output.append(std::to_string((int) constant->String.string->Utf8.bytes[j]))
+                            .append(", ");
+                    }
+
+                    output.append("} }");
+                    break;
+                default:
+                    std::cerr << "[ERROR]: expected Long, Float, Double, Integer, or String for ConstantValue attribute in class " << class_name << "'s field #" << i << " but got " << constant_type_names.at(constant->tag) << std::endl;
+                    return 1;
+                    break;
+            }
+        }
+
         output.append(" },\n");
     }
 
     subIndent();
     indent(output);
     output.append("},\n");
+
     indent(output);
-    output.append("methods = {}\n");
+    output.append("methods = {},\n");
 
     subIndent();
     indent(output);
@@ -225,6 +284,7 @@ int generateLuau(Class& _class, std::string& output, std::optional<std::string_v
         Method& method = _class.method_list[i];
 
         bool is_static = method.access_flags & METHOD_ACC_STATIC;
+        bool is_varargs = method.access_flags & METHOD_ACC_VARARGS;
         bool is_native = method.access_flags & METHOD_ACC_NATIVE;
         bool is_abstract = method.access_flags & METHOD_ACC_ABSTRACT;
 
@@ -292,6 +352,7 @@ int generateLuau(Class& _class, std::string& output, std::optional<std::string_v
 
                 indent(output);
                 output.append("local pc = 0\n");
+
                 indent(output);
                 output.append("local local_array = table.create(")
                     .append(std::to_string(code_attribute->Code.max_locals))
@@ -301,6 +362,9 @@ int generateLuau(Class& _class, std::string& output, std::optional<std::string_v
                 output.append("local stack = table.create(")
                     .append(std::to_string(code_attribute->Code.max_stack))
                     .append(")\n");
+
+                indent(output);
+                output.append("local dynamic_callsite_cache = {}\n");
 
                 indent(output);
                 output.append("local function store(list, value, index)\n");
@@ -341,6 +405,27 @@ int generateLuau(Class& _class, std::string& output, std::optional<std::string_v
                 indent(output);
                 output.append("end\n");
 
+                // TODO: for functions like pop, we should turn those into lambdas
+                /* for example:
+                    OLD:
+                    indent(output);
+                    output.append("local value = pop()\n");
+
+                    NEW:
+                    pop("value")
+
+                    WHICH_WILL_BECOME:
+                    indent(output);
+                    output.append("local value; do\n");
+                    addIndent();
+
+                    // pop code here. i think we just add __ to each variable name to avoid redefinitions
+
+                    subIndent();
+                    indent(output);
+                    output.append("end\n");
+                */
+
                 indent(output);
                 output.append("local function pop()\n");
                 addIndent();
@@ -373,10 +458,65 @@ int generateLuau(Class& _class, std::string& output, std::optional<std::string_v
                 indent(output);
                 output.append("end\n");
 
+                // TODO: we should do some proper prepasses on the instruction list to determine what stuff to emit
+                // i think we could instead just do the instruction loop beforhand and emit that stuff to a separate string that we later append onto output
                 if (code_attribute->Code.code_count > 1) {
                     indent(output);
                     output.append("local argarrayscratch = table.create(256)\n");
                 }
+
+                indent(output);
+                output.append("local exception_table = {\n");
+                addIndent();
+                for (uint16_t j = 0; j < code_attribute->Code.exception_count; j++) {
+                    indent(output);
+                    output.append("{ start_pc = ")
+                        .append(std::to_string(code_attribute->Code.exception_list[j].start_pc))
+                        .append(", end_pc = ")
+                        .append(std::to_string(code_attribute->Code.exception_list[j].end_pc))
+                        .append(", handler_pc = ")
+                        .append(std::to_string(code_attribute->Code.exception_list[j].handler_pc));
+
+                    if (code_attribute->Code.exception_list[j].catch_type) {
+                        output.append(", catch_type = \"");
+                        output.insert(output.end(), code_attribute->Code.exception_list[j].catch_type->Class.name->Utf8.bytes, code_attribute->Code.exception_list[j].catch_type->Class.name->Utf8.bytes + code_attribute->Code.exception_list[j].catch_type->Class.name->Utf8.bytes_size);
+                        output.push_back('"');
+                    }
+
+                    output.append(" },\n");
+                }
+
+                subIndent();
+                indent(output);
+                output.append("}\n");
+
+                indent(output);
+                output.append("local callstackentry\n");
+                indent(output);
+                output.append("do\n");
+                addIndent();
+
+                    indent(output);
+                    output.append("local filename");
+                    if (sourcefile) {
+                        output.append(" = \"");
+                        output.insert(output.end(), sourcefile->SourceFile.sourcefile->Utf8.bytes, sourcefile->SourceFile.sourcefile->Utf8.bytes + sourcefile->SourceFile.sourcefile->Utf8.bytes_size);
+                        output.push_back('"');
+                    }
+                    output.push_back('\n');
+
+                    indent(output);
+                    output.append("callstackentry = { class = april.getClass(\"")
+                        .append(class_name)
+                        .append("\"), method = ")
+                        .append(class_local)
+                        .append(".methods[\"")
+                        .append(method_index)
+                        .append("\"], filename = filename, }\n");
+
+                subIndent();
+                indent(output);
+                output.append("end\n");
 
                 indent(output);
                 output.append("while true do\n");
@@ -462,11 +602,13 @@ int generateLuau(Class& _class, std::string& output, std::optional<std::string_v
                         resultvar = (byte1 << 24) | (byte2 << 16) | (byte3 << 8) | byte4;  \
                         }                                                                  
 
-                    // FIXME: test: monitorenter, monitorexit, ldc_w, invokespecial (on InterfaceMethodref), invokestatic (on InterfaceMethodref), dup_x1, dup_x2, dup2, dup2_x1, dup2_x2, dcmpl, dcmpg, i2s, d2f, ddiv, laload, saload, daload, faload, fcmpg, fcmpl, lastore, sastore, dastore, fastore, irem, f2d, dsub, lrem,  multianewarray, wide, l2d, fdiv, fadd, dneg, fsub, fneg, f2l, l2f, jsr, ret, drem, frem
+                    // FIXME: test: monitorenter, monitorexit, ldc_w, invokespecial (on InterfaceMethodref), invokestatic (on InterfaceMethodref), dup_x1, dup_x2, dup2, dup2_x1, dup2_x2, dcmpl, dcmpg, i2s, d2f, ddiv, laload, saload, daload, faload, fcmpg, fcmpl, lastore, sastore, dastore, fastore, irem, f2d, dsub, lrem, multianewarray, wide, l2d, fdiv, fadd, dneg, fsub, fneg, f2l, l2f, jsr, ret, drem, frem
                     // TODO: null checks (reference tag with value == nil is a null object, hopefully)
-                    // TODO: emulate monitorenter in all instructions that should and also emulate monitorexit in each return instruction
+                    // TODO: emulate monitorenter in all instructions that should and also emulate monitorexit in each return instruction and athrow
                     // FIXME: i recently realized that 'must be of type int' does NOT just mean tag == 'integer', so go back to such opcodes and use april.intValue or april.intJavaValue as applicable
                     // TODO: with monitorenter/monitorexit, also implement Object notifyAll and wait
+
+                    // TODO: i added exception handling! so go back through all instructions and throw exceptions NOT asserts... actually go through each instruction to see which ones like throw for null etc
 
                     unsigned int old_indent = indent_counter;
 
@@ -491,22 +633,28 @@ int generateLuau(Class& _class, std::string& output, std::optional<std::string_v
                         return std::string(" -- name: ").append(utf8Tostring(*name));
                     };
 
+                    auto saveLineNumber = [&output, &line_number_map, &old_pc]() {
+                        indent(output);
+                        output.append("callstackentry.linenumber = ");
+                        if (line_number_map)
+                            output.append(std::to_string(line_number_map[old_pc]));
+                        else
+                            output.push_back('0');
+                        output.push_back('\n');
+                    };
+
                     // TODO: to prevent calling  getClass and index the method each time, the table we add to the callstack should be created once at the beginning of the function and then reused
-                    auto incCallStack = [&output, &class_name, &class_local, &method_index]() {
+                    auto incCallStack = [&output, &saveLineNumber]() {
                         indent(output);
                         output.append("do\n");
                         addIndent();
 
+                        saveLineNumber();
+
                         indent(output);
                         output.append("local callstack = april.callstack\n");
                         indent(output);
-                        output.append("callstack[#callstack + 1] = { class = april.getClass(\"")
-                            .append(class_name)
-                            .append("\"), method = ")
-                            .append(class_local)
-                            .append(".methods[\"")
-                            .append(method_index)
-                            .append("\"] }\n");
+                        output.append("callstack[#callstack + 1] = callstackentry\n");
 
                         subIndent();
                         indent(output);
@@ -522,6 +670,102 @@ int generateLuau(Class& _class, std::string& output, std::optional<std::string_v
                         output.append("local callstack = april.callstack\n");
                         indent(output);
                         output.append("callstack[#callstack] = nil\n");
+
+                        subIndent();
+                        indent(output);
+                        output.append("end\n");
+                    };
+
+                    auto throwException = [&output, &old_pc, &decCallStack](std::string_view expression, std::string_view framecheck, bool needsDecCallstack) {
+                        indent(output);
+                        output.append("local exceptionobjref = ")
+                            .append(expression)
+                            .push_back('\n');
+
+                        indent(output);
+                        output.append("local framecheck = ")
+                            .append(framecheck)
+                            .push_back('\n');
+
+                        // FIXME: i really don't know when to decrease the call stack... here doesn't work because the fillInStackTrace misses this, i think maybe we can do it if we go to a handler?? im not sure
+                        // if (needsDecCallstack)
+                        //     decCallStack();
+
+                        indent(output);
+                        output.append("local exception_classname = exceptionobjref.value.class.name\n");
+
+                        // TODO: rename to handler
+                        indent(output);
+                        output.append("local exception\n");
+                        indent(output);
+                        output.append("for _, v in exception_table do\n");
+                        addIndent();
+                            indent(output);
+                            output.append("local goodpc = ")
+                                .append(std::to_string(old_pc))
+                                .append(" >= v.start_pc and ")
+                                .append(std::to_string(old_pc))
+                                .append(" < v.end_pc\n");
+                            // indent(output);
+                            // output.append("print(\"the catch type:\", v.catch_type)\n");
+                            indent(output);
+                            // TODO: super class?
+                            output.append("if (if not v.catch_type then true else v.catch_type == exception_classname) and goodpc then\n");
+                            addIndent();
+                                indent(output);
+                                output.append("exception = v\n");
+                                indent(output);
+                                output.append("break\n");
+                            subIndent();
+                            indent(output);
+                            output.append("end\n");
+                        subIndent();
+                        indent(output);
+                        output.append("end\n");
+
+                        indent(output);
+                        output.append("if exception then\n");
+                        addIndent();
+
+                            indent(output);
+                            output.append("table.clear(stack)\n");
+                            indent(output);
+                            output.append("store(stack, exceptionobjref)\n");
+                            indent(output);
+                            output.append("pc = exception.handler_pc\n");
+                            indent(output);
+                            output.append("continue\n");
+
+                        subIndent();
+                        indent(output);
+                        output.append("end\n");
+
+                        indent(output);
+                        output.append("if framecheck then\n");
+                        addIndent();
+
+                            indent(output);
+                            output.append("april.exception_thrown = exceptionobjref\n");
+                            indent(output);
+                            output.append("return\n");
+
+                        subIndent();
+                        indent(output);
+                        output.append("end\n");
+
+                        indent(output);
+                        output.append("error(\"EXCEPTION THROWN! \" .. tostring(exception_classname))\n");
+                    };
+
+                    auto handlePostCallException = [&output, &throwException]() {
+                        indent(output);
+                        output.append("local exception = april.getException()\n");
+
+                        indent(output);
+                        output.append("if exception then\n");
+                        addIndent();
+
+                            throwException("exception", "#april.callstack > 1", true);
 
                         subIndent();
                         indent(output);
@@ -575,6 +819,13 @@ int generateLuau(Class& _class, std::string& output, std::optional<std::string_v
                                 output.append("local value = april.newFloatFromBytes(")
                                     .append(std::to_string(constant.Float.bytes))
                                     .append(")\n");
+                                break;
+
+                            case ConstantType::ConstantPatchObject:
+                                indent(output);
+                                output.append("local value = april.constant_patch_objects[")
+                                    .append(std::to_string(constant.ConstantPatchObject.index))
+                                    .append("]\n");
                                 break;
                             default:
                                 std::cerr << "[ERROR]: expected String, Integer, or Float for ldc instruction #" << old_pc << "'s tag but got " << constant_type_names.at(constant.tag) << std::endl;
@@ -2540,15 +2791,19 @@ int generateLuau(Class& _class, std::string& output, std::optional<std::string_v
                             output.append("local value2 = pop()\n");
                             indent(output);
                             output.append("local value1 = pop()\n");
+                            indent(output);
+                            output.append("local value1int = april.intValue(value1)\n");
+                            indent(output);
+                            output.append("local value2int = april.intValue(value2)\n");
                             if (disable_codegen_asserts == 0) {
                                 indent(output);
-                                output.append("assert(value1.tag == \"integer\", \"value1 in isub was not an integer\")\n");
+                                output.append("assert(value1int, \"value1 in isub was not an integer\")\n");
                                 indent(output);
-                                output.append("assert(value2.tag == \"integer\", \"value2 in isub was not an integer\")\n");
+                                output.append("assert(value2int, \"value2 in isub was not an integer\")\n");
                             }
 
                             indent(output);
-                            output.append("store(stack, april.newInteger(value1.value - value2.value))\n");
+                            output.append("store(stack, april.newInteger(value1int - value2int))\n");
 
                             SETPC
                         OPCONDITIONAL(0x65, lsub)
@@ -2604,15 +2859,20 @@ int generateLuau(Class& _class, std::string& output, std::optional<std::string_v
                             output.append("local value2 = pop()\n");
                             indent(output);
                             output.append("local value1 = pop()\n");
+
+                            indent(output);
+                            output.append("local value1int = april.intValue(value1)\n");
+                            indent(output);
+                            output.append("local value2int = april.intValue(value2)\n");
                             if (disable_codegen_asserts == 0) {
                                 indent(output);
-                                output.append("assert(value1.tag == \"integer\", \"value1 in imul was not an integer\")\n");
+                                output.append("assert(value1int, \"value1 in imul was not an integer\")\n");
                                 indent(output);
-                                output.append("assert(value2.tag == \"integer\", \"value2 in imul was not an integer\")\n");
+                                output.append("assert(value2int, \"value2 in imul was not an integer\")\n");
                             }
 
                             indent(output);
-                            output.append("store(stack, april.newInteger(value1.value * value2.value))\n");
+                            output.append("store(stack, april.newInteger(value1int * value2int))\n");
 
                             SETPC
                         OPCONDITIONAL(0x69, lmul)
@@ -3110,15 +3370,19 @@ int generateLuau(Class& _class, std::string& output, std::optional<std::string_v
                             output.append("local value2 = pop()\n");
                             indent(output);
                             output.append("local value1 = pop()\n");
+                            indent(output);
+                            output.append("local value1int = april.intValue(value1)\n");
+                            indent(output);
+                            output.append("local value2int = april.intValue(value2)\n");
                             if (disable_codegen_asserts == 0) {
                                 indent(output);
-                                output.append("assert(value1.tag == \"integer\", \"value1 in ior was not an integer\")\n");
+                                output.append("assert(value1int, \"value1 in ior was not an integer\")\n");
                                 indent(output);
-                                output.append("assert(value2.tag == \"integer\", \"value2 in ior was not an integer\")\n");
+                                output.append("assert(value2int, \"value2 in ior was not an integer\")\n");
                             }
 
                             indent(output);
-                            output.append("store(stack, april.newInteger(bit32.bor(value1.value, value2.value)))\n");
+                            output.append("store(stack, april.newInteger(bit32.bor(value1int, value2int)))\n");
 
                             SETPC
                         OPCONDITIONAL(0x81, lor)
@@ -4074,9 +4338,11 @@ int generateLuau(Class& _class, std::string& output, std::optional<std::string_v
 
                             indent(output);
                             output.append("local index = pop()\n");
+                            indent(output);
+                            output.append("local indexint = april.intValue(index)\n");
                             if (disable_codegen_asserts == 0) {
                                 indent(output);
-                                output.append("assert(index.tag == \"integer\", \"invalid value (not integer type) for index in tableswitch instruction; \" .. index.tag)\n");
+                                output.append("assert(indexint, \"invalid value (not integer type) for index in tableswitch instruction; \" .. index.tag)\n");
                             }
 
                             // TODO: optimize with table (use a scratch like argarray)
@@ -4091,7 +4357,7 @@ int generateLuau(Class& _class, std::string& output, std::optional<std::string_v
                                 }
 
                                 indent(output);
-                                output.append("if index.value == ")
+                                output.append("if indexint == ")
                                     .append(std::to_string(i))
                                     .append("  then\n");
                                 addIndent();
@@ -4416,7 +4682,7 @@ int generateLuau(Class& _class, std::string& output, std::optional<std::string_v
                             output.append("local stacksize = descriptor.stacksize\n");
 
                             indent(output);
-                            output.append("local method = april.lookupMethod(\"");
+                            output.append("local method = april.lookupMethodByClassName(\"");
                             output.insert(output.end(), constant.GeneralRef._class->Class.name->Utf8.bytes, constant.GeneralRef._class->Class.name->Utf8.bytes + constant.GeneralRef._class->Class.name->Utf8.bytes_size);
                             output.append("\", \"");
                             output.insert(output.end(), constant.GeneralRef.name_and_type->NameAndType.name->Utf8.bytes, constant.GeneralRef.name_and_type->NameAndType.name->Utf8.bytes + constant.GeneralRef.name_and_type->NameAndType.name->Utf8.bytes_size);
@@ -4434,7 +4700,7 @@ int generateLuau(Class& _class, std::string& output, std::optional<std::string_v
                             addIndent();
 
                             indent(output);
-                            output.append("methodoverride = april.lookupMethod(object.value.class.name, \"");
+                            output.append("methodoverride = april.lookupMethod(object.value.class, \"");
                             output.insert(output.end(), constant.GeneralRef.name_and_type->NameAndType.name->Utf8.bytes, constant.GeneralRef.name_and_type->NameAndType.name->Utf8.bytes + constant.GeneralRef.name_and_type->NameAndType.name->Utf8.bytes_size);
                             output.append("\", methodtype, true)\n");
 
@@ -4471,6 +4737,8 @@ int generateLuau(Class& _class, std::string& output, std::optional<std::string_v
 
                             indent(output);
                             output.append("local results = table.pack(method.func(object, table.unpack(argarrayscratch, 1, parameter_count)))\n");
+
+                            handlePostCallException();
 
                             decCallStack();
 
@@ -4549,6 +4817,8 @@ int generateLuau(Class& _class, std::string& output, std::optional<std::string_v
                             indent(output);
                             output.append("local results = table.pack(method.func(object, table.unpack(argarrayscratch, 1, parameter_count)))\n");
 
+                            handlePostCallException();
+
                             decCallStack();
 
                             indent(output);
@@ -4597,7 +4867,7 @@ int generateLuau(Class& _class, std::string& output, std::optional<std::string_v
                             output.append("local parameter_count = descriptor.parameter_count\n");
 
                             indent(output);
-                            output.append("local method = april.lookupMethod(\"");
+                            output.append("local method = april.lookupMethodByClassName(\"");
                             output.insert(output.end(), constant.GeneralRef._class->Class.name->Utf8.bytes, constant.GeneralRef._class->Class.name->Utf8.bytes + constant.GeneralRef._class->Class.name->Utf8.bytes_size);
                             output.append("\", \"");
                             output.insert(output.end(), constant.GeneralRef.name_and_type->NameAndType.name->Utf8.bytes, constant.GeneralRef.name_and_type->NameAndType.name->Utf8.bytes + constant.GeneralRef.name_and_type->NameAndType.name->Utf8.bytes_size);
@@ -4631,6 +4901,8 @@ int generateLuau(Class& _class, std::string& output, std::optional<std::string_v
 
                             indent(output);
                             output.append("local results = table.pack(method.func(table.unpack(argarrayscratch, 1, parameter_count)))\n");
+
+                            handlePostCallException();
 
                             decCallStack();
 
@@ -4687,7 +4959,7 @@ int generateLuau(Class& _class, std::string& output, std::optional<std::string_v
 
                             // TODO: use 5.4.3.4 to verify this lookup...
                             indent(output);
-                            output.append("local method = april.lookupMethod(\"");
+                            output.append("local method = april.lookupMethodByClassName(\"");
                             output.insert(output.end(), constant.GeneralRef._class->Class.name->Utf8.bytes, constant.GeneralRef._class->Class.name->Utf8.bytes + constant.GeneralRef._class->Class.name->Utf8.bytes_size);
                             output.append("\", \"");
                             output.insert(output.end(), constant.GeneralRef.name_and_type->NameAndType.name->Utf8.bytes, constant.GeneralRef.name_and_type->NameAndType.name->Utf8.bytes + constant.GeneralRef.name_and_type->NameAndType.name->Utf8.bytes_size);
@@ -4705,7 +4977,7 @@ int generateLuau(Class& _class, std::string& output, std::optional<std::string_v
                             addIndent();
 
                             indent(output);
-                            output.append("methodoverride = april.lookupMethod(object.value.class.name, \"");
+                            output.append("methodoverride = april.lookupMethod(object.value.class, \"");
                             output.insert(output.end(), constant.GeneralRef.name_and_type->NameAndType.name->Utf8.bytes, constant.GeneralRef.name_and_type->NameAndType.name->Utf8.bytes + constant.GeneralRef.name_and_type->NameAndType.name->Utf8.bytes_size);
                             output.append("\", methodtype, true)\n");
 
@@ -4743,6 +5015,8 @@ int generateLuau(Class& _class, std::string& output, std::optional<std::string_v
                             indent(output);
                             output.append("local results = table.pack(method.func(object, table.unpack(argarrayscratch, 1, parameter_count)))\n");
 
+                            handlePostCallException();
+
                             decCallStack();
 
                             indent(output);
@@ -4775,12 +5049,114 @@ int generateLuau(Class& _class, std::string& output, std::optional<std::string_v
 
                             pc += 2; // skip two funny bytes
 
-                            
+                            indent(output);
+                            output.append("-- name: ");
+                            output.insert(output.end(), constant.InvokeDynamic.name_and_type->NameAndType.name->Utf8.bytes, constant.InvokeDynamic.name_and_type->NameAndType.name->Utf8.bytes + constant.InvokeDynamic.name_and_type->NameAndType.name->Utf8.bytes_size);
+                            output.push_back('\n');
 
                             indent(output);
-                            output.append("error(\"TODO: invokedynamic instruction\")\n");
+                            output.append("-- type: ");
+                            output.insert(output.end(), constant.InvokeDynamic.name_and_type->NameAndType.descriptor->Utf8.bytes, constant.InvokeDynamic.name_and_type->NameAndType.descriptor->Utf8.bytes + constant.InvokeDynamic.name_and_type->NameAndType.descriptor->Utf8.bytes_size);
+                            output.push_back('\n');
 
-                            SETPC;
+                            indent(output);
+                            output.append("-- reference kind: ")
+                                .append(methodHandleReferenceKindTostring(constant.InvokeDynamic.bootstrap_method->method_ref->MethodHandle.reference_kind))
+                                .push_back('\n');
+
+                            if (constant.InvokeDynamic.bootstrap_method->method_ref->MethodHandle.reference_kind != REF_invokeStatic) {
+                                indent(output);
+                                output.append("error(\"TODO: invokedynamic instruction on above reference kind is not implemented\")\n");
+                            } else {
+                                indent(output);
+                                output.append("local methodtype = \"");
+                                output.insert(output.end(), constant.InvokeDynamic.bootstrap_method->method_ref->MethodHandle.reference->GeneralRef.name_and_type->NameAndType.descriptor->Utf8.bytes, constant.InvokeDynamic.bootstrap_method->method_ref->MethodHandle.reference->GeneralRef.name_and_type->NameAndType.descriptor->Utf8.bytes + constant.InvokeDynamic.bootstrap_method->method_ref->MethodHandle.reference->GeneralRef.name_and_type->NameAndType.descriptor->Utf8.bytes_size);
+                                output.append("\"\n");
+
+                                indent(output);
+                                output.append("local R = april.lookupMethodByClassName(\"");
+                                output.insert(output.end(), constant.InvokeDynamic.bootstrap_method->method_ref->MethodHandle.reference->GeneralRef._class->Class.name->Utf8.bytes, constant.InvokeDynamic.bootstrap_method->method_ref->MethodHandle.reference->GeneralRef._class->Class.name->Utf8.bytes + constant.InvokeDynamic.bootstrap_method->method_ref->MethodHandle.reference->GeneralRef._class->Class.name->Utf8.bytes_size);
+                                output.append("\", \"");
+                                output.insert(output.end(), constant.InvokeDynamic.bootstrap_method->method_ref->MethodHandle.reference->GeneralRef.name_and_type->NameAndType.name->Utf8.bytes, constant.InvokeDynamic.bootstrap_method->method_ref->MethodHandle.reference->GeneralRef.name_and_type->NameAndType.name->Utf8.bytes + constant.InvokeDynamic.bootstrap_method->method_ref->MethodHandle.reference->GeneralRef.name_and_type->NameAndType.name->Utf8.bytes_size);
+                                output.append("\", methodtype, false)\n");
+
+                                indent(output);
+                                output.append("local lookupclass = april.getClass(\"java/lang/invoke/MethodHandles$Lookup\")\n");
+                                // TODO: we need to follow invokevirtual semantics (see the invokedynamic descriptor) which will make the loadClass redundant
+                                indent(output);
+                                output.append("april.loadClass(lookupclass)\n");
+                                indent(output);
+                                output.append("local lookup = lookupclass.staticinstance[lookupclass.fields.IMPL_LOOKUP]\n");
+
+                                indent(output);
+                                output.append("local bootstrap_args = {\n");
+                                addIndent();
+
+                                for (uint16_t i = 0; i < constant.InvokeDynamic.bootstrap_method->arg_count; i++) {
+                                    Constant* arg = constant.InvokeDynamic.bootstrap_method->arg_list[i];
+                                    switch (arg->tag) {
+                                        case ConstantType::MethodType:
+                                            indent(output);
+                                            output.append("april.newMethodTypeFromDescriptor(descriptor_parser.parseMethodDescriptor(\"");
+                                            output.insert(output.end(), arg->MethodType.descriptor->Utf8.bytes, arg->MethodType.descriptor->Utf8.bytes + arg->MethodType.descriptor->Utf8.bytes_size);
+                                            output.append("\")),\n");
+                                            break;
+                                        case ConstantType::MethodHandle:
+                                            // indent(output);
+                                            // output.append("-- kind: ")
+                                            //     .append(methodHandleReferenceKindTostring(arg->MethodHandle.reference_kind))
+                                            //     .push_back('\n');
+
+                                            switch (arg->MethodHandle.reference_kind) {
+                                                case REF_invokeStatic:
+                                                    indent(output);
+                                                    output.append("lookupclass.methods[\"findStatic-(Ljava/lang/Class;Ljava/lang/String;Ljava/lang/invoke/MethodType;)Ljava/lang/invoke/MethodHandle;\"].func(lookup, april.newReference(april.getClass(\"");
+                                                    output.insert(output.end(), arg->MethodHandle.reference->GeneralRef._class->Class.name->Utf8.bytes, arg->MethodHandle.reference->GeneralRef._class->Class.name->Utf8.bytes + arg->MethodHandle.reference->GeneralRef._class->Class.name->Utf8.bytes_size);
+                                                    output.append("\").classobject), april.newString(\"");
+                                                    output.insert(output.end(), arg->MethodHandle.reference->GeneralRef.name_and_type->NameAndType.name->Utf8.bytes, arg->MethodHandle.reference->GeneralRef.name_and_type->NameAndType.name->Utf8.bytes + arg->MethodHandle.reference->GeneralRef.name_and_type->NameAndType.name->Utf8.bytes_size);
+                                                    output.append("\"), april.newMethodTypeFromDescriptor(descriptor_parser.parseMethodDescriptor(\"");
+                                                    output.insert(output.end(), arg->MethodHandle.reference->GeneralRef.name_and_type->NameAndType.descriptor->Utf8.bytes, arg->MethodHandle.reference->GeneralRef.name_and_type->NameAndType.descriptor->Utf8.bytes + arg->MethodHandle.reference->GeneralRef.name_and_type->NameAndType.descriptor->Utf8.bytes_size);
+                                                    output.append("\"))),\n");
+                                                    break;
+                                                default:
+                                                    // std::cerr << "[ERROR]: expected REF_invokeStatic for invokedynamic instruction #" << old_pc << "'s arg #" << i << " reference_kind but got " << methodHandleReferenceKindTostring(arg->MethodHandle.reference_kind) << std::endl;
+                                                    // return 1;
+                                                    indent(output);
+                                                    output.append("error(\"unimplemented reference kind ")
+                                                        .append(methodHandleReferenceKindTostring(arg->MethodHandle.reference_kind))
+                                                        .append("\"),\n");
+                                                    break;
+                                            }
+                                            break;
+                                        default:
+                                            // std::cerr << "[ERROR]: expected MethodType or MethodHandle for invokedynamic instruction #" << old_pc << "'s arg #" << i << " tag but got " << constant_type_names.at(arg->tag) << std::endl;
+                                            // return 1;
+                                            indent(output);
+                                            output.append("error(\"unimplemented constant type ")
+                                                .append(constant_type_names.at(arg->tag))
+                                                .append("\"),\n");
+                                            break;
+                                    }
+                                }
+
+                                subIndent();
+                                indent(output);
+                                output.append("}\n");
+
+                                // indent(output);
+                                // output.append("local formclass = april.getClass(\"java/lang/invoke/LambdaForm\")\n");
+                                // indent(output);
+                                // output.append("local formobjref = formclass.methods[\"getPreparedForm-(Ljava/lang/String;)Ljava/lang/invoke/LamdaForm;\"].func()\n");
+
+                                indent(output);
+                                output.append("R.func(lookup, april.newString(\"");
+                                output.insert(output.end(), constant.InvokeDynamic.name_and_type->NameAndType.name->Utf8.bytes, constant.InvokeDynamic.name_and_type->NameAndType.name->Utf8.bytes + constant.InvokeDynamic.name_and_type->NameAndType.name->Utf8.bytes_size);
+                                output.append("\"), april.newMethodTypeFromDescriptor(descriptor_parser.parseMethodDescriptor(\"");
+                                output.insert(output.end(), constant.InvokeDynamic.name_and_type->NameAndType.descriptor->Utf8.bytes, constant.InvokeDynamic.name_and_type->NameAndType.descriptor->Utf8.bytes + constant.InvokeDynamic.name_and_type->NameAndType.descriptor->Utf8.bytes_size);
+                                output.append("\")), table.unpack(bootstrap_args))\n");
+                            }
+
+                            SETPC
                         OPCONDITIONAL(0xbb, new)
                             GETAUXTWOBYTE(index, uint16_t)
 
@@ -4894,9 +5270,9 @@ int generateLuau(Class& _class, std::string& output, std::optional<std::string_v
                             output.append("local value = pop()\n");
                             if (disable_codegen_asserts == 0) {
                                 indent(output);
-                                output.append("assert(value.tag == \"reference\", \"value in athrow was not a reference\")\n");
+                                output.append("assert(value.tag == \"reference\", \"value in arraylength was not a reference\")\n");
                                 indent(output);
-                                output.append("assert(value.value.class.isarray, \"value in athrow was not an array\")\n");
+                                output.append("assert(value.value.class.isarray, \"value in arraylength was not an array\")\n");
                             }
                             indent(output);
                             output.append("store(stack, april.newInteger(value.value.size))\n");
@@ -4914,8 +5290,8 @@ int generateLuau(Class& _class, std::string& output, std::optional<std::string_v
                                 output.append("assert(april.hasSuperClassByName(value.value.class, \"java/lang/Throwable\"), \"attempt to throw an object that doesn't inherit java/lang/Throwable\")\n");
                             }
 
-                            indent(output);
-                            output.append("error(\"EXCEPTION THROWN (TODO PROPER EXCEPTION HANDLING): \" .. value.value.class.name)\n");
+                            saveLineNumber();
+                            throwException("value", "next(april.callstack)", false);
                         OPCONDITIONAL(0xc0, checkcast)
                             GETAUXTWOBYTE(index, uint16_t)
 
@@ -4930,43 +5306,60 @@ int generateLuau(Class& _class, std::string& output, std::optional<std::string_v
                             }
 
                             indent(output);
-                            output.append("local value = assert(stack[#stack])\n");
+                            output.append("local value = stack[#stack]\n");
+
+                            indent(output);
+                            output.append("local targetclass = april.getClass(\"");
+                            output.insert(output.end(), constant.Class.name->Utf8.bytes, constant.Class.name->Utf8.bytes + constant.Class.name->Utf8.bytes_size);
+                            output.append("\")\n");
+
                             if (disable_codegen_asserts == 0) {
                                 indent(output);
-                                output.append("assert(value.tag == \"reference\", \"value in checkcast was not a reference\")\n");
+                                output.append("assert(value.tag == \"reference\", \"value in checkcast wasn't a reference\")\n");
                             }
 
-                            indent(output);
-                            output.append("if type(value.value) == \"nil\" then\n");
-                            addIndent();
+                            // indent(output);
+                            // output.append("if value.tag == \"reference\" then\n");
+                            // addIndent();
 
-                            SETPC
+                                indent(output);
+                                output.append("if type(value.value) == \"nil\" then\n");
+                                addIndent();
 
-                            subIndent();
-                            indent(output);
-                            output.append("end\n");
+                                SETPC
 
-                            indent(output);
-                            output.append("if april.instanceofByClassAndTargetName(value.value.class, \"");
-                            output.insert(output.end(), constant.Class.name->Utf8.bytes, constant.Class.name->Utf8.bytes + constant.Class.name->Utf8.bytes_size);
-                            output.append("\") then\n");
-                            addIndent();
+                                subIndent();
+                                indent(output);
+                                output.append("end\n");
 
-                            SETPC
+                                indent(output);
+                                output.append("if april.instanceofByClassAndTargetClass(value.value.class, targetclass) then\n");
+                                addIndent();
 
-                            subIndent();
-                            indent(output);
-                            output.append("else\n");
-                            addIndent();
+                                SETPC
+
+                                subIndent();
+                                indent(output);
+                                output.append("end\n");
+
+                            // subIndent();
+                            // indent(output);
+                            // output.append("end\n");
+
+                            // indent(output);
+                            // output.append("if april.instanceofByValueAndWrappedClass(value, targetclass) then\n");
+                            // addIndent();
+
+                            // SETPC
+
+                            // subIndent();
+                            // indent(output);
+                            // output.append("end\n");
 
                             // TODO: exceptions
 
                             indent(output);
                             output.append("error(\"failed to check cast\")\n");
-
-                            subIndent();
-                            indent(output);
-                            output.append("end\n");
                         OPCONDITIONAL(0xc1, instanceof)
                             GETAUXTWOBYTE(index, uint16_t)
 
@@ -5239,15 +5632,21 @@ int generateLuau(Class& _class, std::string& output, std::optional<std::string_v
                                 }
 
                                 indent(output);
-                                output.append("if count.value == 0 then\n");
-                                addIndent();
+                                output.append("local countvalue = count.value\n");
 
-                                    indent(output);
-                                    output.append("continue\n");
+                                // indent(output);
+                                // output.append("if countvalue == 0 then\n");
+                                // addIndent();
 
-                                subIndent();
+                                //     indent(output);
+                                //     output.append("continue\n");
+
+                                // subIndent();
+                                // indent(output);
+                                // output.append("end\n");
+
                                 indent(output);
-                                output.append("end\n");
+                                output.append("count_list[i] = countvalue\n");
 
                             subIndent();
                             indent(output);
@@ -5258,6 +5657,7 @@ int generateLuau(Class& _class, std::string& output, std::optional<std::string_v
 
                             // TODO: exceptions
                             if (disable_codegen_asserts == 0) {
+                                // TODO: we also gotta check if at least one of the counts were > 0 (and don't come after a 0)
                                 indent(output);
                                 output.append("assert(count > 0)\n");
                             }
@@ -5282,7 +5682,7 @@ int generateLuau(Class& _class, std::string& output, std::optional<std::string_v
                                     addIndent();
 
                                         indent(output);
-                                        output.append("arr.list[i] = allocate(next_descriptor, count + 1)\n");
+                                        output.append("arr.list[i] = allocate(next_descriptor, count_index + 1)\n");
 
                                     subIndent();
                                     indent(output);
@@ -5293,7 +5693,7 @@ int generateLuau(Class& _class, std::string& output, std::optional<std::string_v
                                 output.append("end\n");
 
                                 indent(output);
-                                output.append("return arr\n");
+                                output.append("return april.newReference(arr)\n");
 
                             subIndent();
                             indent(output);
@@ -5307,13 +5707,13 @@ int generateLuau(Class& _class, std::string& output, std::optional<std::string_v
                             output.append("\"\n");
 
                             indent(output);
-                            output.append("local descriptor = descriptor_parser.parseFieldDescriptor('[' .. atype)\n");
+                            output.append("local descriptor = descriptor_parser.parseFieldDescriptor(atype)\n");
 
                             indent(output);
-                            output.append("local array = allocate(descriptor, 1)\n");
+                            output.append("local array = allocate(descriptor.value.array_type, 1)\n");
 
                             indent(output);
-                            output.append("store(stack, april.newReference(array))\n");
+                            output.append("store(stack, array)\n");
 
                             SETPC
                         OPCONDITIONAL(0xc6, ifnull)
@@ -5426,14 +5826,16 @@ int generateLuau(Class& _class, std::string& output, std::optional<std::string_v
             .append("\"] = {\n");
         addIndent();
 
+        std::string method_type(method.descriptor->Utf8.bytes, method.descriptor->Utf8.bytes + method.descriptor->Utf8.bytes_size);
+
         indent(output);
         output.append("name = \"");
         output.insert(output.end(), method.name->Utf8.bytes, method.name->Utf8.bytes + method.name->Utf8.bytes_size);
         output.append("\",\n");
         indent(output);
-        output.append("type = \"");
-        output.insert(output.end(), method.descriptor->Utf8.bytes, method.descriptor->Utf8.bytes + method.descriptor->Utf8.bytes_size);
-        output.append("\",\n");
+        output.append("type = \"")
+            .append(method_type)
+            .append("\",\n");
 
         indent(output);
         output.append("slot = april.nextSlot(),\n");
@@ -5452,6 +5854,14 @@ int generateLuau(Class& _class, std::string& output, std::optional<std::string_v
         indent(output);
         output.append("isabstract = ")
             .append(is_abstract ? "true,\n" : "false,\n");
+
+        bool is_signaturepolymorphic = class_name == "java/lang/invoke/MethodHandle"
+            && method_type == "([Ljava/lang/Object;)Ljava/lang/Object;"
+            && is_varargs && is_native;
+
+        indent(output);
+        output.append("issignaturepolymorphic = ")
+            .append(is_signaturepolymorphic ? "true,\n" : "false,\n");
 
         if (!is_abstract) {
             indent(output);
